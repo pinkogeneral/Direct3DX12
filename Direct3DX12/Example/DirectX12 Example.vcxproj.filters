@@ -1,0 +1,89 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <FxCompile Include="Shaders\color.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\LightingUtil.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="LandAndWaves.cpp" />
+    <ClCompile Include="Waves.cpp" />
+    <ClCompile Include="..\Common\Camera.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Common\d3dApp.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Common\d3dUtil.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Common\DDSTextureLoader.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Common\GameTimer.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Common\GeometryGenerator.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Common\MathHelper.cpp">
+      <Filter>common</Filter>
+    </ClCompile>
+    <ClCompile Include="ClientApp.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="FrameResource.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Waves.h" />
+    <ClInclude Include="..\Common\Camera.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\d3dApp.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\d3dUtil.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\d3dx12.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\DDSTextureLoader.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\GameTimer.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\GeometryGenerator.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\MathHelper.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\UploadBuffer.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="ClientApp.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="FrameResource.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="common">
+      <UniqueIdentifier>{e7bfdce6-60b1-437e-ad9c-b5d92059cb54}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{f0f5a165-2973-4228-8a4a-847211d00037}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scene">
+      <UniqueIdentifier>{fb300236-fac6-488b-9a45-4d8f63ea6419}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

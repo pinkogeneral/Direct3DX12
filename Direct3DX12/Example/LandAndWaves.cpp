@@ -8,10 +8,10 @@
 //   Hold the right mouse button down and move the mouse to zoom in and out.
 //***************************************************************************************
 
-#include "Common/d3dApp.h"
-#include "Common/MathHelper.h"
-#include "Common/UploadBuffer.h"
-#include "Common/GeometryGenerator.h"
+#include "../Common/d3dApp.h"
+#include "../Common/MathHelper.h"
+#include "../Common/UploadBuffer.h"
+#include "../Common/GeometryGenerator.h"
 #include "Waves.h"
 
 using Microsoft::WRL::ComPtr;
