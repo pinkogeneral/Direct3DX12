@@ -233,7 +233,6 @@ struct Texture
 {
     // 검색을 위한 고유한 메터리얼 이름입니다.
     std::string Name;
-
     std::wstring Filename;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> Resource = nullptr;
