@@ -53,10 +53,11 @@ bool ClientMain::Initialize()
     BuildRootSignature();
     BuildShadersAndInputLayout();
     BuildShapeGeometry();
+    BuildMaterials();
     BuildRenderItems();
     BuildFrameResources();
-    BuildDescriptorHeaps();
-    BuildConstantBufferViews();
+    //BuildDescriptorHeaps();
+    //BuildConstantBufferViews();
     BuildPSOs();
 
     // 초기화 명령들을 실행시킵니다.
@@ -99,6 +100,7 @@ void ClientMain::Update(const GameTimer& gt)
     }
 
     UpdateObjectCBs(gt);
+    UpdateMaterialCBs(gt);
     UpdateMainPassCB(gt);
 }
 
@@ -135,15 +137,18 @@ void ClientMain::Draw(const GameTimer& gt)
     // 어디에 렌더링을 할지 설정합니다.
     mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
 
-    ID3D12DescriptorHeap* descriptorHeaps[] = {mCbvHeap.Get()};
-    mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+    //ID3D12DescriptorHeap* descriptorHeaps[] = {mCbvHeap.Get()};
+    //mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
     mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
-    int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex;
-    auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
-    passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescriptorSize);
-    mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
+    //int passCbvIndex = mPassCbvOffset + mCurrFrameResourceIndex;
+    //auto passCbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
+    //passCbvHandle.Offset(passCbvIndex, mCbvSrvUavDescriptorSize);
+    //mCommandList->SetGraphicsRootDescriptorTable(1, passCbvHandle);
+
+    auto passCB = mCurrFrameResource->PassCB->Resource(); 
+    mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
 
     DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
@@ -269,7 +274,25 @@ void ClientMain::UpdateObjectCBs(const GameTimer& gt)
 
 void ClientMain::UpdateMaterialCBs(const GameTimer& gt)
 {
+    auto currMaterialCB = mCurrFrameResource->MaterialCB.get();
 
+    for (auto& e : mMaterials)
+    {
+        Material* mat = e.second.get();
+        if (mat->NumFramesDirty > 0)
+        {
+            XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform); 
+
+            MaterialConstants matConstants; 
+            matConstants.DiffuseAlbedo = mat->DiffuseAlbedo;
+            matConstants.FresnelR0 = mat->FresnelR0; 
+            matConstants.Roughness = mat->Roughness; 
+            XMStoreFloat4x4(&matConstants.MatTransform, XMMatrixTranspose(matTransform));
+            currMaterialCB->CopyData(mat->MatCBIndex, matConstants); 
+
+            mat->NumFramesDirty--; 
+        }
+    }
 }
 
 void ClientMain::UpdateMainPassCB(const GameTimer& gt)
@@ -373,21 +396,16 @@ void ClientMain::BuildConstantBufferViews()
 
 void ClientMain::BuildRootSignature()
 {
-    CD3DX12_DESCRIPTOR_RANGE cbvTable0;
-    cbvTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
-
-    CD3DX12_DESCRIPTOR_RANGE cbvTable1;
-    cbvTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1);
-
     // 루트 파라미터는 테이블, 루트 디스크립터, 루트 상수가 될 수 있습니다.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[2];
+    CD3DX12_ROOT_PARAMETER slotRootParameter[3];
 
     // 루트 CBV를 생성합니다.
-    slotRootParameter[0].InitAsDescriptorTable(1, &cbvTable0);
-    slotRootParameter[1].InitAsDescriptorTable(1, &cbvTable1);
+    slotRootParameter[0].InitAsConstantBufferView(0);
+    slotRootParameter[1].InitAsConstantBufferView(1);
+    slotRootParameter[2].InitAsConstantBufferView(2);
 
     // 루트 시그네쳐는 루트 파라미터 배열입니다.
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(2, slotRootParameter, 0, nullptr,
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, slotRootParameter, 0, nullptr,
                                             D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
     // 한 개의 상수 버퍼로 구성된 디스크립터 레인지를 가르키고 있는
@@ -418,7 +436,8 @@ void ClientMain::BuildShadersAndInputLayout()
     mInputLayout =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        { "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
+        { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        { "TEXCOORD",    0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
     };
 }
 
@@ -610,7 +629,7 @@ void ClientMain::BuildFrameResources()
     for (int i = 0; i < gNumFrameResources; ++i)
     {
         mFrameResources.push_back(std::make_unique<FrameResource>(
-            md3dDevice.Get(), 1, (UINT)mAllRitems.size()));
+            md3dDevice.Get(), 1, (UINT)mAllRitems.size(), (UINT)mMaterials.size()));
     }
 }
 
@@ -620,6 +639,7 @@ void ClientMain::BuildRenderItems()
     XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
     boxRitem->ObjCBIndex = 0;
     boxRitem->Geo = mGeometries["shapeGeo"].get();
+    boxRitem->Mat = mMaterials["stone0"].get();
     boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     boxRitem->IndexCount = (UINT)boxRitem->Geo->DrawArgs["box"].IndexCount;
     boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
@@ -630,17 +650,25 @@ void ClientMain::BuildRenderItems()
     gridRitem->World = MathHelper::Identity4x4();
     gridRitem->ObjCBIndex = 1;
     gridRitem->Geo = mGeometries["shapeGeo"].get();
+    gridRitem->Mat = mMaterials["tile0"].get();
     gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
     gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
     gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
     mAllRitems.push_back(std::move(gridRitem));
 
+	auto Skullitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&Skullitem->World, XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 0.0f, 0.0f));
+	Skullitem->ObjCBIndex = 2;
+	Skullitem->Geo = mGeometries["shapeGeo"].get();
+	Skullitem->Mat = mMaterials["skullMat"].get();
+	Skullitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	Skullitem->IndexCount = (UINT)Skullitem->Geo->DrawArgs["Skull"].IndexCount;
+	Skullitem->StartIndexLocation = Skullitem->Geo->DrawArgs["Skull"].StartIndexLocation;
+	Skullitem->BaseVertexLocation = Skullitem->Geo->DrawArgs["Skull"].BaseVertexLocation;
+	mAllRitems.push_back(std::move(Skullitem));
 
-   
-
-
-    UINT objCBIndex = 2;
+    UINT objCBIndex = 3;
     for (int i = 0; i < 5; ++i)
     {
         auto leftCylRitem = std::make_unique<RenderItem>();
@@ -657,6 +685,7 @@ void ClientMain::BuildRenderItems()
         XMStoreFloat4x4(&leftCylRitem->World, rightCylWorld);
         leftCylRitem->ObjCBIndex = objCBIndex++;
         leftCylRitem->Geo = mGeometries["shapeGeo"].get();
+        leftCylRitem->Mat = mMaterials["bricks0"].get();
         leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
         leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -665,6 +694,7 @@ void ClientMain::BuildRenderItems()
         XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
         rightCylRitem->ObjCBIndex = objCBIndex++;
         rightCylRitem->Geo = mGeometries["shapeGeo"].get();
+        rightCylRitem->Mat = mMaterials["bricks0"].get();
         rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
         rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -673,6 +703,7 @@ void ClientMain::BuildRenderItems()
         XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
         leftSphereRitem->ObjCBIndex = objCBIndex++;
         leftSphereRitem->Geo = mGeometries["shapeGeo"].get();
+        leftSphereRitem->Mat = mMaterials["bricks0"].get();
         leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
         leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -681,6 +712,7 @@ void ClientMain::BuildRenderItems()
         XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
         rightSphereRitem->ObjCBIndex = objCBIndex++;
         rightSphereRitem->Geo = mGeometries["shapeGeo"].get();
+        rightSphereRitem->Mat = mMaterials["bricks0"].get();
         rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
         rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -692,17 +724,6 @@ void ClientMain::BuildRenderItems()
         mAllRitems.push_back(std::move(rightSphereRitem));
     }
 
-
-    auto Skullitem = std::make_unique<RenderItem>();
-    XMStoreFloat4x4(&Skullitem->World, XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 0.0f, 0.0f ));
-    Skullitem->ObjCBIndex = 0;
-    Skullitem->Geo = mGeometries["shapeGeo"].get();
-    Skullitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    Skullitem->IndexCount = (UINT)Skullitem->Geo->DrawArgs["Skull"].IndexCount;
-    Skullitem->StartIndexLocation = Skullitem->Geo->DrawArgs["Skull"].StartIndexLocation;
-    Skullitem->BaseVertexLocation = Skullitem->Geo->DrawArgs["Skull"].BaseVertexLocation;
-    mAllRitems.push_back(std::move(Skullitem));
-
     // 모든 렌더 아이템들은 불투명합니다.
     for (auto& e : mAllRitems)
         mOpaqueRitems.push_back(e.get());
@@ -711,8 +732,11 @@ void ClientMain::BuildRenderItems()
 void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
 {
     UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
+
 
     auto objectCB = mCurrFrameResource->ObjectCB->Resource();
+    auto matCB = mCurrFrameResource->MaterialCB->Resource();
 
     // 각 렌더 항목에 대해서...
     for (size_t i = 0; i < ritems.size(); ++i)
@@ -723,14 +747,56 @@ void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::
         cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
         cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-        // 현 프레임 리소스에 해당하는 오브젝트의 CBV의 오프셋을 계산합니다.
-        UINT cbvIndex = mCurrFrameResourceIndex * (UINT)mOpaqueRitems.size() + ri->ObjCBIndex;
+        D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize; 
+		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
 
-        auto cbvHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(mCbvHeap->GetGPUDescriptorHandleForHeapStart());
-        cbvHandle.Offset(cbvIndex, mCbvSrvUavDescriptorSize);
 
-        cmdList->SetGraphicsRootDescriptorTable(0, cbvHandle);
+        cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
+		cmdList->SetGraphicsRootConstantBufferView(1, matCBAddress);
+
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
 }
+
+
+void ClientMain::BuildMaterials()
+{
+	auto bricks0 = std::make_unique<Material>();
+	bricks0->Name = "bricks0";
+	bricks0->MatCBIndex = 0;
+	bricks0->DiffuseSrvHeapIndex = 0;
+	bricks0->DiffuseAlbedo = XMFLOAT4(Colors::ForestGreen);
+	bricks0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
+	bricks0->Roughness = 0.1f;
+
+	auto stone0 = std::make_unique<Material>();
+	stone0->Name = "stone0";
+	stone0->MatCBIndex = 1;
+	stone0->DiffuseSrvHeapIndex = 1;
+	stone0->DiffuseAlbedo = XMFLOAT4(Colors::LightSteelBlue);
+	stone0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	stone0->Roughness = 0.3f;
+
+	auto tile0 = std::make_unique<Material>();
+	tile0->Name = "tile0";
+	tile0->MatCBIndex = 2;
+	tile0->DiffuseSrvHeapIndex = 2;
+	tile0->DiffuseAlbedo = XMFLOAT4(Colors::LightGray);
+	tile0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
+	tile0->Roughness = 0.2f;
+
+	auto skullMat = std::make_unique<Material>();
+	skullMat->Name = "skullMat";
+	skullMat->MatCBIndex = 3;
+	skullMat->DiffuseSrvHeapIndex = 3;
+	skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	skullMat->Roughness = 0.3f;
+
+	mMaterials["bricks0"] = std::move(bricks0);
+	mMaterials["stone0"] = std::move(stone0);
+	mMaterials["tile0"] = std::move(tile0);
+	mMaterials["skullMat"] = std::move(skullMat);
+}
+
