@@ -494,8 +494,16 @@ void ClientMain::BuildRootSignature()
     auto staticSamplers = GetStaticSamplers();
 
     // 루트 시그네쳐는 루트 파라미터 배열입니다.
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter, 0, nullptr,
-                                            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+    // CD3DX12_ROOT_SIGNATURE_DESC
+    // UINT numParameters,
+    // const D3D12_ROOT_PARAMETER * _pParameters,
+    // UINT numStaticSamplers = 0,
+    // const D3D12_STATIC_SAMPLER_DESC * _pStaticSamplers = NULL,
+    // D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE)
+
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+        (UINT)staticSamplers.size(), staticSamplers.data(),
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
     // 한 개의 상수 버퍼로 구성된 디스크립터 레인지를 가르키고 있는
     // 두 개의 슬롯으로 구성되어있는 루트 시그네쳐를 생성합니다.
@@ -859,9 +867,9 @@ void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
 
 
+		cmdList->SetGraphicsRootDescriptorTable(0, tex); 
         cmdList->SetGraphicsRootConstantBufferView(1, objCBAddress);
 		cmdList->SetGraphicsRootConstantBufferView(3, matCBAddress);
-		cmdList->SetGraphicsRootDescriptorTable(0, tex); 
 
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
@@ -870,7 +878,6 @@ void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::
 
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> ClientMain::GetStaticSamplers()
 {
-
 	const CD3DX12_STATIC_SAMPLER_DESC pointWrap(
 		0, // shaderRegister
 		D3D12_FILTER_MIN_MAG_MIP_POINT, // filter
