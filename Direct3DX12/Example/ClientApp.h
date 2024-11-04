@@ -42,6 +42,15 @@ struct RenderItem
 	int BaseVertexLocation = 0;
 };
 
+enum class RenderLayer : int
+{
+	Opaque = 0,
+	opaque_wireframe,
+	Transparent,
+	AlphaTested,
+	Count
+};
+
 class ClientMain : public D3DApp
 {
 public:
@@ -107,7 +116,7 @@ private:
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
 
 	// PSO에 의해 나눠진 렌더 아이템 목록.
-	std::vector<RenderItem*> mOpaqueRitems;
+	std::vector<RenderItem*> mRenderItems[(int)RenderLayer::Count];
 
 	PassConstants mMainPassCB;
 

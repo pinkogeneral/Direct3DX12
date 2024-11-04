@@ -1,1 +1,0 @@
-C:\Users\Sunmee\Documents\GitHub\Direct3DX12\Direct3DX12\Example\x64\Debug\DirectX12.exe

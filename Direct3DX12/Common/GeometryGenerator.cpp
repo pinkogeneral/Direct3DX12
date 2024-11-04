@@ -510,8 +510,8 @@ GeometryGenerator::MeshData GeometryGenerator::GeometryGenerator::CreateSkull()
 	{
 		fin >> meshData.Vertices[i].Position.x >> meshData.Vertices[i].Position.y >> meshData.Vertices[i].Position.z;
 		fin >> meshData.Vertices[i].Normal.x >> meshData.Vertices[i].Normal.y >> meshData.Vertices[i].Normal.z;
-		meshData.Vertices[i].TexC.x = 0;
-		meshData.Vertices[i].TexC.y = 0; 
+		//meshData.Vertices[i].TexC.x = 0;
+		//meshData.Vertices[i].TexC.y = 0; 
 	}
 
 	fin >> ignore;

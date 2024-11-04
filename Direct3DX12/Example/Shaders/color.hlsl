@@ -1,5 +1,7 @@
 //***************************************************************************************
 // Default.hlsl by Frank Luna (C) 2015 All Rights Reserved.
+//
+// Default shader, currently supports lighting.
 //***************************************************************************************
 
 // Defaults for number of lights.
@@ -35,7 +37,7 @@ cbuffer cbPerObject : register(b0)
 	float4x4 gTexTransform;
 };
 
-// Constant data that varies per material.
+// Constant data that varies per pass.
 cbuffer cbPass : register(b1)
 {
     float4x4 gView;
@@ -44,15 +46,24 @@ cbuffer cbPass : register(b1)
     float4x4 gInvProj;
     float4x4 gViewProj;
     float4x4 gInvViewProj;
+
     float3 gEyePosW;
     float cbPerObjectPad1;
     float2 gRenderTargetSize;
     float2 gInvRenderTargetSize;
+
     float gNearZ;
     float gFarZ;
     float gTotalTime;
     float gDeltaTime;
     float4 gAmbientLight;
+
+	// Allow application to change fog parameters once per frame.
+	// For example, we may only use fog for certain times of day.
+	float4 gFogColor;
+	float gFogStart;
+	float gFogRange;
+	float2 cbPerObjectPad2;
 
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
@@ -101,7 +112,7 @@ VertexOut VS(VertexIn vin)
 	// Output vertex attributes for interpolation across triangle.
 	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
 	vout.TexC = mul(texC, gMatTransform).xy;
-	
+
     return vout;
 }
 
@@ -109,11 +120,20 @@ float4 PS(VertexOut pin) : SV_Target
 {
     float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
 	
+#ifdef ALPHA_TEST
+	// Discard pixel if texture alpha < 0.1.  We do this test as soon 
+	// as possible in the shader so that we can potentially exit the
+	// shader early, thereby skipping the rest of the shader code.
+	clip(diffuseAlbedo.a - 0.1f);
+#endif
+
     // Interpolating normal can unnormalize it, so renormalize it.
     pin.NormalW = normalize(pin.NormalW);
 
     // Vector from point being lit to eye. 
-    float3 toEyeW = normalize(gEyePosW - pin.PosW);
+	float3 toEyeW = gEyePosW - pin.PosW;
+	float distToEye = length(toEyeW);
+	toEyeW /= distToEye; // normalize
 
     // Light terms.
     float4 ambient = gAmbientLight*diffuseAlbedo;
@@ -125,6 +145,11 @@ float4 PS(VertexOut pin) : SV_Target
         pin.NormalW, toEyeW, shadowFactor);
 
     float4 litColor = ambient + directLight;
+
+#ifdef FOG
+	float fogAmount = saturate((distToEye - gFogStart) / gFogRange);
+	litColor = lerp(litColor, gFogColor, fogAmount);
+#endif
 
     // Common convention to take alpha from diffuse albedo.
     litColor.a = diffuseAlbedo.a;

@@ -55,14 +55,15 @@ bool ClientMain::Initialize()
 	mCbvSrvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
     LoadTexture();
+
     BuildRootSignature();
     BuildDescriptorHeaps();
 
     BuildShadersAndInputLayout();
     BuildShapeGeometry();
+
     BuildMaterials();
     BuildRenderItems();
-
     BuildFrameResources();
     //BuildConstantBufferViews();
     BuildPSOs();
@@ -155,7 +156,13 @@ void ClientMain::Draw(const GameTimer& gt)
     auto passCB = mCurrFrameResource->PassCB->Resource(); 
     mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
 
-    DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+    DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Opaque]);
+
+	mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
+	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::AlphaTested]);
+
+	mCommandList->SetPipelineState(mPSOs["transparent"].Get());
+	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Transparent]);
 
     // 리소스의 상태를 출력할 수 있도록 변경합니다.
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
@@ -361,11 +368,18 @@ void ClientMain::LoadTexture()
 		mCommandList.Get(), tileTex->Filename.c_str(),
 		tileTex->Resource, tileTex->UploadHeap));
 
+	auto fenceTex = std::make_unique<Texture>();
+	fenceTex->Name = "fenceTex";
+	fenceTex->Filename = L"../Textures/WireFence.dds";
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
+		mCommandList.Get(), fenceTex->Filename.c_str(),
+		fenceTex->Resource, fenceTex->UploadHeap));
+
 
 	mTextures[bricksTex->Name] = std::move(bricksTex);
 	mTextures[stoneTex->Name] = std::move(stoneTex);
 	mTextures[tileTex->Name] = std::move(tileTex);
-
+    mTextures[fenceTex->Name] = std::move(fenceTex);
 }
 
 void ClientMain::BuildDescriptorHeaps()
@@ -374,7 +388,7 @@ void ClientMain::BuildDescriptorHeaps()
     // 셰이더 프로그램이 사용할 루트 서명 매개변수 슬롯에 설정할 수 있다. 
 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 3;
+	srvHeapDesc.NumDescriptors = 4;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -387,6 +401,7 @@ void ClientMain::BuildDescriptorHeaps()
 	auto bricksTex = mTextures["bricksTex"]->Resource;
 	auto stoneTex = mTextures["stoneTex"]->Resource;
 	auto tileTex = mTextures["tileTex"]->Resource;
+    auto fenceTex = mTextures["fenceTex"]->Resource;
 
     // Shader4ComponentMapping : 셰이더에서 텍스처의 표본을 추출하면 지정된 텍스처 좌표에 잇는 텍스처 자료를 담은 벡터가 반환된다.
     // Format : 자원의 형식 DXGI_FORMAT
@@ -399,85 +414,86 @@ void ClientMain::BuildDescriptorHeaps()
 	srvDesc.Format = bricksTex->GetDesc().Format; 
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.Texture2D.MipLevels = bricksTex->GetDesc().MipLevels;
+	srvDesc.Texture2D.MipLevels = -1;
 	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 	md3dDevice->CreateShaderResourceView(bricksTex.Get(), &srvDesc, hDescriptor);
 
     // 힙의 다음 서술자로 넘어간다. 
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-
 	srvDesc.Format = stoneTex->GetDesc().Format;
-	srvDesc.Texture2D.MipLevels = stoneTex->GetDesc().MipLevels;
 	md3dDevice->CreateShaderResourceView(stoneTex.Get(), &srvDesc, hDescriptor);
 
     // 힙의 다음 서술자로 넘어간다. 
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-
 	srvDesc.Format = tileTex->GetDesc().Format;
-	srvDesc.Texture2D.MipLevels = tileTex->GetDesc().MipLevels;
 	md3dDevice->CreateShaderResourceView(tileTex.Get(), &srvDesc, hDescriptor);
-
+   
+    // 힙의 다음 서술자로 넘어간다. 
+    hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	srvDesc.Format = fenceTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(fenceTex.Get(), &srvDesc, hDescriptor);
 }
 
 void ClientMain::BuildConstantBufferViews()
 {
-    UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
+    //UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 
-    UINT objCount = (UINT)mOpaqueRitems.size();
+    //UINT objCount = (UINT)mRenderItems.size();
 
-    // 매 프레임마다 각 오브젝트의 CBV가 필요합니다.
-    for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
-    {
-        auto objectCB = mFrameResources[frameIndex]->ObjectCB->Resource();
-        for (UINT i = 0; i < objCount; ++i)
-        {
-            D3D12_GPU_VIRTUAL_ADDRESS cbAddress = objectCB->GetGPUVirtualAddress();
+    //// 매 프레임마다 각 오브젝트의 CBV가 필요합니다.
+    //for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
+    //{
+    //    auto objectCB = mFrameResources[frameIndex]->ObjectCB->Resource();
+    //    for (UINT i = 0; i < objCount; ++i)
+    //    {
+    //        D3D12_GPU_VIRTUAL_ADDRESS cbAddress = objectCB->GetGPUVirtualAddress();
 
-            // i번째 상수 버퍼의 오프셋을 더해줍니다.
-            cbAddress += i * objCBByteSize;
+    //        // i번째 상수 버퍼의 오프셋을 더해줍니다.
+    //        cbAddress += i * objCBByteSize;
 
-            // 디스크립터 힙에서 오브젝트를 위한 CBV의 오프셋을 계산합니다.
-            int heapIndex = frameIndex * objCount + i;
-            auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-            handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
+    //        // 디스크립터 힙에서 오브젝트를 위한 CBV의 오프셋을 계산합니다.
+    //        int heapIndex = frameIndex * objCount + i;
+    //        auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
+    //        handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
 
-            D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-            cbvDesc.BufferLocation = cbAddress;
-            cbvDesc.SizeInBytes = objCBByteSize;
+    //        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+    //        cbvDesc.BufferLocation = cbAddress;
+    //        cbvDesc.SizeInBytes = objCBByteSize;
 
-            md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-        }
-    }
+    //        md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
+    //    }
+    //}
 
-    UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
+    //UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
 
-    // 마지막 세개의 디스크립터들은 매 프레임을 위한 패스 CBV입니다.
-    for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
-    {
-        auto passCB = mFrameResources[frameIndex]->PassCB->Resource();
-        D3D12_GPU_VIRTUAL_ADDRESS cbAddress = passCB->GetGPUVirtualAddress();
+    //// 마지막 세개의 디스크립터들은 매 프레임을 위한 패스 CBV입니다.
+    //for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
+    //{
+    //    auto passCB = mFrameResources[frameIndex]->PassCB->Resource();
+    //    D3D12_GPU_VIRTUAL_ADDRESS cbAddress = passCB->GetGPUVirtualAddress();
 
-        // 디스크립터 힙에서 패스를 위한 CBV의 오프셋을 계산합니다.
-        int heapIndex = mPassCbvOffset + frameIndex;
-        auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-        handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
+    //    // 디스크립터 힙에서 패스를 위한 CBV의 오프셋을 계산합니다.
+    //    int heapIndex = mPassCbvOffset + frameIndex;
+    //    auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
+    //    handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
 
-        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-        cbvDesc.BufferLocation = cbAddress;
-        cbvDesc.SizeInBytes = passCBByteSize;
+    //    D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+    //    cbvDesc.BufferLocation = cbAddress;
+    //    cbvDesc.SizeInBytes = passCBByteSize;
 
-        md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-    }
+    //    md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
+    //}
 }
 
 void ClientMain::BuildRootSignature()
 {
-
-	CD3DX12_DESCRIPTOR_RANGE texTable;
-	texTable.Init(
+    // Texture2D    gDiffuseMap : register(t0);
+	CD3DX12_DESCRIPTOR_RANGE texTable; 
+    texTable.Init(
 		D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
 		1,  // number of descriptors
 		0); // register (t0)
+
 
     // 루트 파라미터는 테이블, 루트 디스크립터, 루트 상수가 될 수 있습니다.
     CD3DX12_ROOT_PARAMETER slotRootParameter[4];
@@ -485,13 +501,12 @@ void ClientMain::BuildRootSignature()
 
     // 퍼포먼스 TIP : 가장 자주 발생하는 것 부터 가장 적게 발생하는 것 순으로 정렬한다.
     // 루트 CBV를 생성합니다.
-
 	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
 	slotRootParameter[1].InitAsConstantBufferView(0); // register (b0)
 	slotRootParameter[2].InitAsConstantBufferView(1); // register (b1)
 	slotRootParameter[3].InitAsConstantBufferView(2); // register (b2)
 
-    auto staticSamplers = GetStaticSamplers();
+    auto staticSamplers = GetStaticSamplers(); //(s0 ~ s5)
 
     // 루트 시그네쳐는 루트 파라미터 배열입니다.
     // CD3DX12_ROOT_SIGNATURE_DESC
@@ -527,8 +542,22 @@ void ClientMain::BuildRootSignature()
 
 void ClientMain::BuildShadersAndInputLayout()
 {
+	const D3D_SHADER_MACRO defines[] =
+	{
+		"FOG", "1",
+		NULL, NULL
+	};
+
+	const D3D_SHADER_MACRO alphaTestDefines[] =
+	{
+		"FOG", "1",
+		"ALPHA_TEST", "1",
+		NULL, NULL
+	};
+
     mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "VS", "vs_5_1");
-    mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "PS", "ps_5_1");
+    mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", defines, "PS", "ps_5_1");
+	mShaders["alphaTestedPS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", alphaTestDefines, "PS", "ps_5_1");
 
     mInputLayout =
     {
@@ -541,11 +570,11 @@ void ClientMain::BuildShadersAndInputLayout()
 void ClientMain::BuildShapeGeometry()
 {
     GeometryGenerator geoGen;
-    GeometryGenerator::MeshData box = geoGen.CreateBox(1.5f, 0.5f, 1.5f, 3);
+    GeometryGenerator::MeshData box = geoGen.CreateBox(1.5f, 1.5f, 1.5f, 3);
     GeometryGenerator::MeshData grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
     GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
     GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
-    GeometryGenerator::MeshData Skull = geoGen.CreateSkull();
+    //GeometryGenerator::MeshData Skull = geoGen.CreateSkull();
     //
     // 모든 지오메트리를 하나의 큰 버텍스/인덱스 버퍼에 연결해서 저장합니다.
     // 그러므로 각각의 서브메쉬가 버퍼에서 차지하는 영역을 정의합니다.
@@ -557,14 +586,14 @@ void ClientMain::BuildShapeGeometry()
     UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
     UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
 
-    UINT SkullVertexOffset = cylinderVertexOffset + (UINT)cylinder.Vertices.size();
+    //UINT SkullVertexOffset = cylinderVertexOffset + (UINT)cylinder.Vertices.size();
     // 연결된 인덱스 버퍼에서 각 오브젝트의 시작 인덱스를 캐시합니다.
     UINT boxIndexOffset = 0;
     UINT gridIndexOffset = (UINT)box.Indices32.size();
     UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
     UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
 
-    UINT SkullIndexOffset = cylinderIndexOffset + (UINT)cylinder.Indices32.size();;
+    //UINT SkullIndexOffset = cylinderIndexOffset + (UINT)cylinder.Indices32.size();;
     // 버텍스/인덱스 버퍼에서 각 도형을 정의하는 서브메쉬 지오메트리를 정의합니다.
     
     SubmeshGeometry boxSubmesh;
@@ -587,10 +616,10 @@ void ClientMain::BuildShapeGeometry()
     cylinderSubmesh.StartIndexLocation = cylinderIndexOffset;
     cylinderSubmesh.BaseVertexLocation = cylinderVertexOffset;
 
-    SubmeshGeometry SkullSubmesh;
-    SkullSubmesh.IndexCount = (UINT)Skull.Indices32.size();
-    SkullSubmesh.StartIndexLocation = SkullIndexOffset;
-    SkullSubmesh.BaseVertexLocation = SkullVertexOffset;
+    //SubmeshGeometry SkullSubmesh;
+    //SkullSubmesh.IndexCount = (UINT)Skull.Indices32.size();
+    //SkullSubmesh.StartIndexLocation = SkullIndexOffset;
+    //SkullSubmesh.BaseVertexLocation = SkullVertexOffset;
     //
     // 필요한 버텍스 엘리먼트들을 추출하고
     // 모든 메쉬의 버텍스를 한 버텍스 버퍼에 저장합니다.
@@ -600,8 +629,8 @@ void ClientMain::BuildShapeGeometry()
         box.Vertices.size() +
         grid.Vertices.size() +
         sphere.Vertices.size() +
-        cylinder.Vertices.size() +
-        Skull.Vertices.size();
+        cylinder.Vertices.size();// +
+       // Skull.Vertices.size();
 
     std::vector<Vertex> vertices(totalVertexCount);
 
@@ -634,19 +663,19 @@ void ClientMain::BuildShapeGeometry()
         vertices[k].TexC = cylinder.Vertices[i].TexC;
     }
 
-    for (size_t i = 0; i < Skull.Vertices.size(); ++i, ++k)
-    {
-        vertices[k].Pos = Skull.Vertices[i].Position;
-        vertices[k].Normal = Skull.Vertices[i].Normal;
-        vertices[k].TexC = Skull.Vertices[i].TexC;
-    }
+    //for (size_t i = 0; i < Skull.Vertices.size(); ++i, ++k)
+    //{
+    //    vertices[k].Pos = Skull.Vertices[i].Position;
+    //    vertices[k].Normal = Skull.Vertices[i].Normal;
+    //    vertices[k].TexC = Skull.Vertices[i].TexC;
+    //}
 
     std::vector<std::uint16_t> indices;
     indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
     indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
     indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
     indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
-    indices.insert(indices.end(), std::begin(Skull.GetIndices16()), std::end(Skull.GetIndices16()));
+    //indices.insert(indices.end(), std::begin(Skull.GetIndices16()), std::end(Skull.GetIndices16()));
 
     const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
     const UINT ibByteSize = (UINT)indices.size()  * sizeof(std::uint16_t);
@@ -679,7 +708,7 @@ void ClientMain::BuildShapeGeometry()
     geo->DrawArgs["grid"] = gridSubmesh;
     geo->DrawArgs["sphere"] = sphereSubmesh;
     geo->DrawArgs["cylinder"] = cylinderSubmesh;
-    geo->DrawArgs["Skull"] = SkullSubmesh;
+   // geo->DrawArgs["Skull"] = SkullSubmesh;
     
     mGeometries[geo->Name] = std::move(geo);
 }
@@ -717,9 +746,32 @@ void ClientMain::BuildPSOs()
     opaquePsoDesc.DSVFormat = mDepthStencilFormat;
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
 
-    //
-    //
-    // 불투명 와이어프레임 오브젝트를 위한 PSO 생성
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentPsoDesc = opaquePsoDesc;
+
+	D3D12_RENDER_TARGET_BLEND_DESC transparencyBlendDesc;
+	transparencyBlendDesc.BlendEnable = true;
+	transparencyBlendDesc.LogicOpEnable = false;
+	transparencyBlendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+	transparencyBlendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	transparencyBlendDesc.BlendOp = D3D12_BLEND_OP_ADD;
+	transparencyBlendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
+	transparencyBlendDesc.DestBlendAlpha = D3D12_BLEND_ZERO;
+	transparencyBlendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	transparencyBlendDesc.LogicOp = D3D12_LOGIC_OP_NOOP;
+	transparencyBlendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	transparentPsoDesc.BlendState.RenderTarget[0] = transparencyBlendDesc;
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&transparentPsoDesc, IID_PPV_ARGS(&mPSOs["transparent"])));
+
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC alphaTestedPsoDesc = opaquePsoDesc;
+	alphaTestedPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["alphaTestedPS"]->GetBufferPointer()),
+		mShaders["alphaTestedPS"]->GetBufferSize()
+	};
+	alphaTestedPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&alphaTestedPsoDesc, IID_PPV_ARGS(&mPSOs["alphaTested"])));
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePsoDesc;
     opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -738,46 +790,47 @@ void ClientMain::BuildFrameResources()
 void ClientMain::BuildRenderItems()
 {
     auto boxRitem = std::make_unique<RenderItem>();
-    XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 0.5f, 0.0f));
+    XMStoreFloat4x4(&boxRitem->World, XMMatrixScaling(2.0f, 2.0f, 2.0f) * XMMatrixTranslation(0.0f, 1.0f, 0.0f));
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
-    boxRitem->ObjCBIndex = 0;
+    boxRitem->ObjCBIndex = 1;
     boxRitem->Geo = mGeometries["shapeGeo"].get();
-    boxRitem->Mat = mMaterials["stone0"].get();
+    boxRitem->Mat = mMaterials["wirefence"].get();
     boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     boxRitem->IndexCount = (UINT)boxRitem->Geo->DrawArgs["box"].IndexCount;
     boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
     boxRitem->BaseVertexLocation = boxRitem->Geo->DrawArgs["box"].BaseVertexLocation;
+    mRenderItems[(int)RenderLayer::AlphaTested].push_back(boxRitem.get()); 
     mAllRitems.push_back(std::move(boxRitem));
 
 
     auto gridRitem = std::make_unique<RenderItem>();
     gridRitem->World = MathHelper::Identity4x4();
 	XMStoreFloat4x4(&gridRitem->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
-    gridRitem->ObjCBIndex = 1;
+    gridRitem->ObjCBIndex = 0;
     gridRitem->Geo = mGeometries["shapeGeo"].get();
     gridRitem->Mat = mMaterials["tile0"].get();
     gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
     gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
     gridRitem->BaseVertexLocation = gridRitem->Geo->DrawArgs["grid"].BaseVertexLocation;
+    mRenderItems[(int)RenderLayer::Opaque].push_back(gridRitem.get());
     mAllRitems.push_back(std::move(gridRitem));
 
-
-	auto Skullitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&Skullitem->World, XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 0.0f, 0.0f));
-	XMStoreFloat4x4(&Skullitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
-	Skullitem->ObjCBIndex = 2;
-	Skullitem->Geo = mGeometries["shapeGeo"].get();
-	Skullitem->Mat = mMaterials["skullMat"].get();
-	Skullitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	Skullitem->IndexCount = (UINT)Skullitem->Geo->DrawArgs["Skull"].IndexCount;
-	Skullitem->StartIndexLocation = Skullitem->Geo->DrawArgs["Skull"].StartIndexLocation;
-	Skullitem->BaseVertexLocation = Skullitem->Geo->DrawArgs["Skull"].BaseVertexLocation;
-	mAllRitems.push_back(std::move(Skullitem));
+	//auto Skullitem = std::make_unique<RenderItem>();
+	//XMStoreFloat4x4(&Skullitem->World, XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 0.0f, 0.0f));
+	//XMStoreFloat4x4(&Skullitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
+	//Skullitem->ObjCBIndex = 2;
+	//Skullitem->Geo = mGeometries["shapeGeo"].get();
+	//Skullitem->Mat = mMaterials["skullMat"].get();
+	//Skullitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	//Skullitem->IndexCount = (UINT)Skullitem->Geo->DrawArgs["Skull"].IndexCount;
+	//Skullitem->StartIndexLocation = Skullitem->Geo->DrawArgs["Skull"].StartIndexLocation;
+	//Skullitem->BaseVertexLocation = Skullitem->Geo->DrawArgs["Skull"].BaseVertexLocation;
+	//mAllRitems.push_back(std::move(Skullitem));
 
 
 	XMMATRIX brickTexTransform = XMMatrixScaling(1.0f, 1.0f, 1.0f);
-    UINT objCBIndex = 3;
+    UINT objCBIndex = 2;
     for (int i = 0; i < 5; ++i)
     {
         auto leftCylRitem = std::make_unique<RenderItem>();
@@ -800,6 +853,7 @@ void ClientMain::BuildRenderItems()
         leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
         leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
         leftCylRitem->BaseVertexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
+        mRenderItems[(int)RenderLayer::Opaque].push_back(leftCylRitem.get());
 
         XMStoreFloat4x4(&rightCylRitem->World, leftCylWorld);
 		XMStoreFloat4x4(&rightCylRitem->TexTransform, brickTexTransform);
@@ -810,6 +864,7 @@ void ClientMain::BuildRenderItems()
         rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
         rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
         rightCylRitem->BaseVertexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].BaseVertexLocation;
+        mRenderItems[(int)RenderLayer::Opaque].push_back(rightCylRitem.get());
 
         XMStoreFloat4x4(&leftSphereRitem->World, leftSphereWorld);
 		XMStoreFloat4x4(&leftSphereRitem->TexTransform, brickTexTransform);
@@ -820,6 +875,7 @@ void ClientMain::BuildRenderItems()
         leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
         leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
         leftSphereRitem->BaseVertexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+        mRenderItems[(int)RenderLayer::Opaque].push_back(leftSphereRitem.get());
 
         XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
@@ -830,7 +886,9 @@ void ClientMain::BuildRenderItems()
         rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
         rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
         rightSphereRitem->BaseVertexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
-
+        
+        mRenderItems[(int)RenderLayer::Opaque].push_back(rightSphereRitem.get());
+        
         mAllRitems.push_back(std::move(leftCylRitem));
         mAllRitems.push_back(std::move(rightCylRitem));
         mAllRitems.push_back(std::move(leftSphereRitem));
@@ -838,8 +896,8 @@ void ClientMain::BuildRenderItems()
     }
 
     // 모든 렌더 아이템들은 불투명합니다.
-    for (auto& e : mAllRitems)
-        mOpaqueRitems.push_back(e.get());
+    //for (auto& e : mAllRitems)
+    //    mRenderItems.push_back(e.get());
 }
 
 void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
@@ -854,6 +912,9 @@ void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::
     for (size_t i = 0; i < ritems.size(); ++i)
     {
         auto ri = ritems[i];
+
+        //if (ri == nullptr) 
+        //    continue;
 
         cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
         cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
@@ -957,17 +1018,26 @@ void ClientMain::BuildMaterials()
 	tile0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
 	tile0->Roughness = 0.2f;
 
-	auto skullMat = std::make_unique<Material>();
-	skullMat->Name = "skullMat";
-	skullMat->MatCBIndex = 3;
-	skullMat->DiffuseSrvHeapIndex = 3;
-	skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
-	skullMat->Roughness = 0.3f;
+	auto wirefence = std::make_unique<Material>();
+	wirefence->Name = "wirefence";
+	wirefence->MatCBIndex = 3;
+	wirefence->DiffuseSrvHeapIndex = 3; // BuildDescriptorHeaps 순서 !! 
+	wirefence->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	wirefence->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
+	wirefence->Roughness = 0.25f;
+
+	//auto skullMat = std::make_unique<Material>();
+	//skullMat->Name = "skullMat";
+	//skullMat->MatCBIndex = 3;
+	//skullMat->DiffuseSrvHeapIndex = 3;
+	//skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	//skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
+	//skullMat->Roughness = 0.3f;
 
 	mMaterials["bricks0"] = std::move(bricks0);
 	mMaterials["stone0"] = std::move(stone0);
 	mMaterials["tile0"] = std::move(tile0);
-	mMaterials["skullMat"] = std::move(skullMat);
+    mMaterials["wirefence"] = std::move(wirefence);
+	//mMaterials["skullMat"] = std::move(skullMat);
 }
 
