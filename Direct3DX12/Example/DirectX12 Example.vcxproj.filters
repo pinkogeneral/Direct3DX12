@@ -86,4 +86,7 @@
       <UniqueIdentifier>{fb300236-fac6-488b-9a45-4d8f63ea6419}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="memo.txt" />
+  </ItemGroup>
 </Project>

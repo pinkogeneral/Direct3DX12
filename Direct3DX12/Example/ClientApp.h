@@ -48,6 +48,8 @@ enum class RenderLayer : int
 	opaque_wireframe,
 	Transparent,
 	AlphaTested,
+	Mirrors,
+	Reflected,
 	Count
 };
 
@@ -76,6 +78,7 @@ private:
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
+	void UpdateReflectedPassCB(const GameTimer& gt);
 
 	void LoadTexture(); 
 	void BuildDescriptorHeaps();
@@ -118,11 +121,16 @@ private:
 	// PSO에 의해 나눠진 렌더 아이템 목록.
 	std::vector<RenderItem*> mRenderItems[(int)RenderLayer::Count];
 
+	XMFLOAT3 mReflectTranslation = { 0.0f, 1.0f, -5.0f };
+
 	PassConstants mMainPassCB;
+	PassConstants mReflectedPassCB;
 
 	UINT mPassCbvOffset = 0;
 
 	bool mIsWireframe = false;
+
+	RenderItem* mReflectedSkullRitem = nullptr;
 
 	XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
 	XMFLOAT4X4 mView = MathHelper::Identity4x4();
