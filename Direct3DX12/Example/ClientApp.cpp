@@ -54,6 +54,8 @@ bool ClientMain::Initialize()
     // so we have to query this information.
 	mCbvSrvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+	mCamera.SetPosition(0.0f, 2.0f, -15.0f);
+
     LoadTexture();
 
     BuildRootSignature();
@@ -83,9 +85,7 @@ void ClientMain::OnResize()
 {
     D3DApp::OnResize();
 
-    // 윈도우 크기가 변경됬기 때문에 화면 비율을 업데이트하고 프로젝션 메트릭스를 다시 계산합니다.
-    XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
-    XMStoreFloat4x4(&mProj, P);
+    mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
 }
 
 void ClientMain::Update(const GameTimer& gt)
@@ -123,22 +123,14 @@ void ClientMain::Draw(const GameTimer& gt)
     ThrowIfFailed(cmdListAlloc->Reset());
 
     // ExecuteCommandList를 통해 커맨드 큐에 제출한 다음에 커맨드 리스트를 리셋할 수 있습니다.
-    if (mIsWireframe)
-    {
-        ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque_wireframe"].Get()));
-    }
-    else
-    {
-        ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
-    }
-    
+    ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
     // 리소스의 상태를 렌더링을 할 수 있도록 변경합니다.
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-                                                                           D3D12_RESOURCE_STATE_PRESENT,
-                                                                           D3D12_RESOURCE_STATE_RENDER_TARGET));
+        D3D12_RESOURCE_STATE_PRESENT,
+        D3D12_RESOURCE_STATE_RENDER_TARGET));
 
     // 백 버퍼와 뎁스 버퍼를 클리어 합니다.
     mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
@@ -148,54 +140,54 @@ void ClientMain::Draw(const GameTimer& gt)
     mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
 
     // 서술자 테이블 
-	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+    ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+    mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
     mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
-	UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
+    UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
 
-    auto passCB = mCurrFrameResource->PassCB->Resource(); 
+    auto passCB = mCurrFrameResource->PassCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
     // 불투명한 항목 (바닥, 벽, 상자등을 그린다.)
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Opaque]);
 
     // 가시적 거울 픽셀들을 스텐실 버퍼 1로 표시해 둔다.
-	mCommandList->OMSetStencilRef(1);
-	mCommandList->SetPipelineState(mPSOs["markStencilMirrors"].Get());
-	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Mirrors]);
+    mCommandList->OMSetStencilRef(1);
+    mCommandList->SetPipelineState(mPSOs["markStencilMirrors"].Get());
+    DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Mirrors]);
 
-	// 반사상을 거울 영역에만 그린다. (스텐실 버퍼 항목이 1인 픽셀들만 그려지게 한다) 이전과 다른 패스별 살수 버퍼를 지정해야 함을 주목하자.
-	// 거울 평면에 대해 반사된 광원 설정을 담은 패스별 상수 버퍼를 지정한다.
-	mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress() + 1 * passCBByteSize);
-	mCommandList->SetPipelineState(mPSOs["drawStencilReflections"].Get());
-	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Reflected]);
+    // 반사상을 거울 영역에만 그린다. (스텐실 버퍼 항목이 1인 픽셀들만 그려지게 한다) 이전과 다른 패스별 살수 버퍼를 지정해야 함을 주목하자.
+    // 거울 평면에 대해 반사된 광원 설정을 담은 패스별 상수 버퍼를 지정한다.
+    mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress() + 1 * passCBByteSize);
+    mCommandList->SetPipelineState(mPSOs["drawStencilReflections"].Get());
+    DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Reflected]);
 
-	// Restore main pass constants and stencil ref.
-	mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
-	mCommandList->OMSetStencilRef(0);
+    // Restore main pass constants and stencil ref.
+    mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
+    mCommandList->OMSetStencilRef(0);
 
-	// Draw mirror with transparency so reflection blends through.
-	mCommandList->SetPipelineState(mPSOs["transparent"].Get());
-	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Transparent]);
+    // Draw mirror with transparency so reflection blends through.
+    mCommandList->SetPipelineState(mPSOs["transparent"].Get());
+    DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Transparent]);
 
 
-	mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
-	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::AlphaTested]);
+    mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
+    DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::AlphaTested]);
 
-	//mCommandList->SetPipelineState(mPSOs["transparent"].Get());
-	//DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Transparent]);
+    //mCommandList->SetPipelineState(mPSOs["transparent"].Get());
+    //DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Transparent]);
 
     // 리소스의 상태를 출력할 수 있도록 변경합니다.
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-                                                                           D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                                                           D3D12_RESOURCE_STATE_PRESENT));
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PRESENT));
 
     // 커맨드 기록을 종료합니다.
     ThrowIfFailed(mCommandList->Close());
 
     // 커맨드 리스트의 실행을 위해 큐에 제출합니다.
-    ID3D12CommandList* cmdLists[] = {mCommandList.Get()};
+    ID3D12CommandList* cmdLists[] = { mCommandList.Get() };
     mCommandQueue->ExecuteCommandLists(1, cmdLists);
 
     // 백 버퍼와 프론트 버퍼를 교체합니다.
@@ -232,24 +224,14 @@ void ClientMain::OnMouseMove(WPARAM btnState, int x, int y)
         float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
         float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-        // 입력에 기초에 각도를 갱신해서 카메라가 상자 중심으로 공전하게 합니다.
-        mTheta += dx;
-        mPhi += dy;
-
-        // mPhi의 각도를 제한합니다.
-        mPhi = MathHelper::Clamp(mPhi, 0.1f, MathHelper::Pi - 0.1f);
+		mCamera.Pitch(dy);
+		mCamera.RotateY(dx);
     }
     else if ((btnState & MK_RBUTTON) != 0)
     {
         // 마우스 한 픽셀의 이동을 0.005 단위에 대응시킵니다.
         float dx = 0.2f * static_cast<float>(x - mLastMousePos.x);
         float dy = 0.2f * static_cast<float>(y - mLastMousePos.y);
-
-        // 인력에 의해 카메라의 반지름을 업데이트 합니다.
-        mRadius += dx - dy;
-
-        // 반지름을 제한합니다.
-        mRadius = MathHelper::Clamp(mRadius, 5.0f, 100.0f);
     }
 
     mLastMousePos.x = x;
@@ -258,26 +240,27 @@ void ClientMain::OnMouseMove(WPARAM btnState, int x, int y)
 
 void ClientMain::OnKeyboardInput(const GameTimer& gt)
 {
-    if (GetAsyncKeyState('1') & 0x8000)
-        mIsWireframe = true;
-    else
-        mIsWireframe = false;
+	const float dt = gt.DeltaTime();
+
+	if (GetAsyncKeyState('W') & 0x8000)
+		mCamera.Walk(10.0f * dt);
+
+	if (GetAsyncKeyState('S') & 0x8000)
+		mCamera.Walk(-10.0f * dt);
+
+	if (GetAsyncKeyState('A') & 0x8000)
+		mCamera.Strafe(-10.0f * dt);
+
+	if (GetAsyncKeyState('D') & 0x8000)
+		mCamera.Strafe(10.0f * dt);
+
+	mCamera.UpdateViewMatrix();
+
+
 }
 
 void ClientMain::UpdateCamera(const GameTimer& gt)
 {
-    // 구 좌표계를 카타시안 좌표계로 변환합니다.
-    mEyePos.x = mRadius * sinf(mPhi) * cosf(mTheta);
-    mEyePos.z = mRadius * sinf(mPhi) * sinf(mTheta);
-    mEyePos.y = mRadius * cosf(mPhi);
-
-    // 뷰 메트릭스를 계산합니다.
-    XMVECTOR pos = XMVectorSet(mEyePos.x, mEyePos.y, mEyePos.z, 1.0f);
-    XMVECTOR target = XMVectorZero();
-    XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-
-    XMMATRIX view = XMMatrixLookAtLH(pos, target, up);
-    XMStoreFloat4x4(&mView, view);
 }
 
 void ClientMain::AnimateMaterials(const GameTimer& gt)
@@ -333,8 +316,8 @@ void ClientMain::UpdateMaterialCBs(const GameTimer& gt)
 
 void ClientMain::UpdateMainPassCB(const GameTimer& gt)
 {
-    XMMATRIX view = XMLoadFloat4x4(&mView);
-    XMMATRIX proj = XMLoadFloat4x4(&mProj);
+    XMMATRIX view = mCamera.GetView();
+    XMMATRIX proj = mCamera.GetProj();
 
     XMMATRIX viewProj = XMMatrixMultiply(view, proj);
     XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
@@ -347,7 +330,7 @@ void ClientMain::UpdateMainPassCB(const GameTimer& gt)
     XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
     XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
     XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
-    mMainPassCB.EyePosW = mEyePos;
+    mMainPassCB.EyePosW = mCamera.GetPosition3f();
     mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
     mMainPassCB.RenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
     mMainPassCB.NearZ = 1.0f;
@@ -444,7 +427,6 @@ void ClientMain::BuildDescriptorHeaps()
 {
     // 텍스처 자원을 성공적으로 생성했다면, SRV서술자를 생성해야한다. 
     // 셰이더 프로그램이 사용할 루트 서명 매개변수 슬롯에 설정할 수 있다. 
-
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
 	srvHeapDesc.NumDescriptors = 4;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;

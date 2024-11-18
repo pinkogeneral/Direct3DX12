@@ -2,6 +2,7 @@
 
 #include "../Common/d3dApp.h"
 #include "../Common/GeometryGenerator.h"
+#include "../Common/Camera.h"
 #include "FrameResource.h"
 
 using Microsoft::WRL::ComPtr;
@@ -127,18 +128,8 @@ private:
 	PassConstants mReflectedPassCB;
 
 	UINT mPassCbvOffset = 0;
-
-	bool mIsWireframe = false;
-
 	RenderItem* mReflectedSkullRitem = nullptr;
 
-	XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT4X4 mView = MathHelper::Identity4x4();
-	XMFLOAT4X4 mProj = MathHelper::Identity4x4();
-
-	float mTheta = 1.5f * XM_PI;
-	float mPhi = 0.2f * XM_PI;
-	float mRadius = 15.0f;
-
+	Camera mCamera;
 	POINT mLastMousePos;
 };
