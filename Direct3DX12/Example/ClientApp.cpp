@@ -65,6 +65,7 @@ bool ClientMain::Initialize()
     BuildShapeGeometry();
 
     BuildMaterials();
+    BuildSkyRenderItems(); 
     BuildRenderItems();
     BuildFrameResources();
     //BuildConstantBufferViews();
@@ -150,7 +151,11 @@ void ClientMain::Draw(const GameTimer& gt)
     auto passCB = mCurrFrameResource->PassCB->Resource();
     mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
     // 불투명한 항목 (바닥, 벽, 상자등을 그린다.)
+
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Opaque]);
+
+	mCommandList->SetPipelineState(mPSOs["sky"].Get());
+	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Sky]);
 
     // 가시적 거울 픽셀들을 스텐실 버퍼 1로 표시해 둔다.
     mCommandList->OMSetStencilRef(1);
@@ -175,8 +180,6 @@ void ClientMain::Draw(const GameTimer& gt)
     mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::AlphaTested]);
 
-    //mCommandList->SetPipelineState(mPSOs["transparent"].Get());
-    //DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Transparent]);
 
     // 리소스의 상태를 출력할 수 있도록 변경합니다.
     mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
@@ -372,55 +375,41 @@ void ClientMain::UpdateReflectedPassCB(const GameTimer& gt)
 
 void ClientMain::LoadTexture()
 {
-	auto bricksTex = std::make_unique<Texture>();
-	bricksTex->Name = "bricksTex";
-	bricksTex->Filename = L"../Textures/bricks.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), bricksTex->Filename.c_str(),
-		bricksTex->Resource, bricksTex->UploadHeap));
+	std::vector<std::string> texNames =
+	{
+		"bricksTex",
+		"stoneTex",
+		"checkboardTex",
+		"fenceTex",
+        "brick3Tex",
+        "iceTex",
+		"defaultDiffuseMap",
+		"skyCubeMap",
+	};
 
-	auto stoneTex = std::make_unique<Texture>();
-	stoneTex->Name = "stoneTex";
-	stoneTex->Filename = L"../Textures/stone.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), stoneTex->Filename.c_str(),
-		stoneTex->Resource, stoneTex->UploadHeap));
+	std::vector<std::wstring> texFilenames =
+	{
+		L"../Textures/bricks.dds",
+		L"../Textures/stone.dds",
+		L"../Textures/checkboard.dds",
+		L"../Textures/WireFence.dds", 
+        L"../Textures/bricks3.dds",
+        L"../Textures/ice.dds",
+		L"../Textures/white1x1.dds",
+		L"../Textures/grasscube1024.dds"
+	};
 
-	auto tileTex = std::make_unique<Texture>();
-	tileTex->Name = "checkboardTex";
-	tileTex->Filename = L"../Textures/checkboard.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), tileTex->Filename.c_str(),
-		tileTex->Resource, tileTex->UploadHeap));
+	for (int i = 0; i < (int)texNames.size(); ++i)
+	{
+		auto texMap = std::make_unique<Texture>();
+		texMap->Name = texNames[i];
+		texMap->Filename = texFilenames[i];
+		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
+			mCommandList.Get(), texMap->Filename.c_str(),
+			texMap->Resource, texMap->UploadHeap));
 
-	auto fenceTex = std::make_unique<Texture>();
-	fenceTex->Name = "fenceTex";
-	fenceTex->Filename = L"../Textures/WireFence.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), fenceTex->Filename.c_str(),
-		fenceTex->Resource, fenceTex->UploadHeap));
-
-	auto brick03Tex = std::make_unique<Texture>();
-    brick03Tex->Name = "brick3Tex";
-    brick03Tex->Filename = L"../Textures/bricks3.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), brick03Tex->Filename.c_str(),
-        brick03Tex->Resource, brick03Tex->UploadHeap));
-
-	auto iceTex = std::make_unique<Texture>();
-    iceTex->Name = "iceTex";
-    iceTex->Filename = L"../Textures/ice.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), iceTex->Filename.c_str(),
-        iceTex->Resource, iceTex->UploadHeap));
-
-
-	mTextures[bricksTex->Name] = std::move(bricksTex);
-	mTextures[stoneTex->Name] = std::move(stoneTex);
-	mTextures[tileTex->Name] = std::move(tileTex);
-    mTextures[fenceTex->Name] = std::move(fenceTex);
-    mTextures[brick03Tex->Name] = std::move(brick03Tex);
-    mTextures[iceTex->Name] = std::move(iceTex);
+		mTextures[texMap->Name] = std::move(texMap);
+	}
 }
 
 void ClientMain::BuildDescriptorHeaps()
@@ -487,63 +476,25 @@ void ClientMain::BuildDescriptorHeaps()
 
 void ClientMain::BuildConstantBufferViews()
 {
-    //UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-
-    //UINT objCount = (UINT)mRenderItems.size();
-
-    //// 매 프레임마다 각 오브젝트의 CBV가 필요합니다.
-    //for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
-    //{
-    //    auto objectCB = mFrameResources[frameIndex]->ObjectCB->Resource();
-    //    for (UINT i = 0; i < objCount; ++i)
-    //    {
-    //        D3D12_GPU_VIRTUAL_ADDRESS cbAddress = objectCB->GetGPUVirtualAddress();
-
-    //        // i번째 상수 버퍼의 오프셋을 더해줍니다.
-    //        cbAddress += i * objCBByteSize;
-
-    //        // 디스크립터 힙에서 오브젝트를 위한 CBV의 오프셋을 계산합니다.
-    //        int heapIndex = frameIndex * objCount + i;
-    //        auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-    //        handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
-
-    //        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-    //        cbvDesc.BufferLocation = cbAddress;
-    //        cbvDesc.SizeInBytes = objCBByteSize;
-
-    //        md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-    //    }
-    //}
-
-    //UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
-
-    //// 마지막 세개의 디스크립터들은 매 프레임을 위한 패스 CBV입니다.
-    //for (int frameIndex = 0; frameIndex < gNumFrameResources; ++frameIndex)
-    //{
-    //    auto passCB = mFrameResources[frameIndex]->PassCB->Resource();
-    //    D3D12_GPU_VIRTUAL_ADDRESS cbAddress = passCB->GetGPUVirtualAddress();
-
-    //    // 디스크립터 힙에서 패스를 위한 CBV의 오프셋을 계산합니다.
-    //    int heapIndex = mPassCbvOffset + frameIndex;
-    //    auto handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(mCbvHeap->GetCPUDescriptorHandleForHeapStart());
-    //    handle.Offset(heapIndex, mCbvSrvUavDescriptorSize);
-
-    //    D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-    //    cbvDesc.BufferLocation = cbAddress;
-    //    cbvDesc.SizeInBytes = passCBByteSize;
-
-    //    md3dDevice->CreateConstantBufferView(&cbvDesc, handle);
-    //}
 }
 
 void ClientMain::BuildRootSignature()
 {
     // Texture2D    gDiffuseMap : register(t0);
+    // sampler 
 	CD3DX12_DESCRIPTOR_RANGE texTable; 
     texTable.Init(
 		D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
 		1,  // number of descriptors
 		0); // register (t0)
+
+
+	CD3DX12_DESCRIPTOR_RANGE texTable1;
+	texTable1.Init(
+        D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+        5,
+        1,
+        0);
 
 
     // 루트 파라미터는 테이블, 루트 디스크립터, 루트 상수가 될 수 있습니다.
@@ -606,16 +557,18 @@ void ClientMain::BuildShadersAndInputLayout()
 		NULL, NULL
 	};
 
-    mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", nullptr, "VS", "vs_5_1");
-    mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", defines, "PS", "ps_5_1");
-	mShaders["alphaTestedPS"] = d3dUtil::CompileShader(L"Shaders\\color.hlsl", alphaTestDefines, "PS", "ps_5_1");
-
+    mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\default.hlsl", nullptr, "VS", "vs_5_1");
+    mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\default.hlsl", defines, "PS", "ps_5_1");
+	mShaders["alphaTestedPS"] = d3dUtil::CompileShader(L"Shaders\\default.hlsl", alphaTestDefines, "PS", "ps_5_1");
+	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\sky.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\sky.hlsl", nullptr, "PS", "ps_5_1");
+	
     mInputLayout =
-    {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        { "TEXCOORD",    0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
-    };
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	};
 }
 
 void ClientMain::BuildShapeGeometry()
@@ -910,6 +863,30 @@ void ClientMain::BuildPSOs()
     D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueWireframePsoDesc = opaquePsoDesc;
     opaqueWireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaqueWireframePsoDesc, IID_PPV_ARGS(&mPSOs["opaque_wireframe"])));
+
+    
+    // - sky pso 만들기 
+    // 개별적인 셰이더 프로그램들이 쓰이므로 따로 만들어준다. 
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC skyPsoDesc = opaquePsoDesc;
+
+    // - CullMode: 카메라가 구의 내부에 있기 때문에 후면 선별을 비활성화해야한다. 
+	skyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    // - DepthFunc: LESS_EQUAL 하늘 구가 깊이 판정을 통과한다. 
+	skyPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	skyPsoDesc.pRootSignature = mRootSignature.Get();
+	skyPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["skyVS"]->GetBufferPointer()),
+		mShaders["skyVS"]->GetBufferSize()
+	};
+	skyPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["skyPS"]->GetBufferPointer()),
+		mShaders["skyPS"]->GetBufferSize()
+	};
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&skyPsoDesc, IID_PPV_ARGS(&mPSOs["sky"])));
+
 }
 
 void ClientMain::BuildFrameResources()
@@ -982,12 +959,10 @@ void ClientMain::BuildRenderItems()
     wallRitem->IndexCount = wallRitem->Geo->DrawArgs["wall"].IndexCount;
     wallRitem->StartIndexLocation = wallRitem->Geo->DrawArgs["wall"].StartIndexLocation;
     wallRitem->BaseVertexLocation = wallRitem->Geo->DrawArgs["wall"].BaseVertexLocation;
-	//mRenderItems[(int)RenderLayer::Opaque].push_back(wallRitem.get());
-	//mAllRitems.push_back(std::move(wallRitem));
+
 
 	auto iceRitem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&iceRitem->World, XMMatrixScaling(0.4f, 0.4f, 0.4f) + XMMatrixTranslation(+3.1f, 0.0f, 0.0f));
-	//XMStoreFloat4x4(&iceRitem->World,  XMMatrixTranslation(-0.1f, 0.0f, 0.0f));
 	XMStoreFloat4x4(&iceRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
 	iceRitem->ObjCBIndex = 4;
 	iceRitem->Geo = mGeometries["shapeGeo"].get();
@@ -999,20 +974,6 @@ void ClientMain::BuildRenderItems()
 	mRenderItems[(int)RenderLayer::Mirrors].push_back(iceRitem.get());
     mRenderItems[(int)RenderLayer::Transparent].push_back(iceRitem.get());
 	mAllRitems.push_back(std::move(iceRitem));
-
-
-	//auto Skullitem = std::make_unique<RenderItem>();
-	//XMStoreFloat4x4(&Skullitem->World, XMMatrixScaling(0.5f, 0.5f, 0.5f) * XMMatrixTranslation(0.0f, 0.0f, 0.0f));
-	//XMStoreFloat4x4(&Skullitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
-	//Skullitem->ObjCBIndex = 2;
-	//Skullitem->Geo = mGeometries["shapeGeo"].get();
-	//Skullitem->Mat = mMaterials["skullMat"].get();
-	//Skullitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	//Skullitem->IndexCount = (UINT)Skullitem->Geo->DrawArgs["Skull"].IndexCount;
-	//Skullitem->StartIndexLocation = Skullitem->Geo->DrawArgs["Skull"].StartIndexLocation;
-	//Skullitem->BaseVertexLocation = Skullitem->Geo->DrawArgs["Skull"].BaseVertexLocation;
-	//mAllRitems.push_back(std::move(Skullitem));
-
 
 	XMMATRIX brickTexTransform = XMMatrixScaling(1.0f, 1.0f, 1.0f);
     UINT objCBIndex = 5;
@@ -1130,10 +1091,23 @@ void ClientMain::BuildRenderItems()
 		mAllRitems.push_back(std::move(reflectedleftSphereRitem));
 		mAllRitems.push_back(std::move(reflectedrightSphereRitem));
     }
+}
 
-    // 모든 렌더 아이템들은 불투명합니다.
-    //for (auto& e : mAllRitems)
-    //    mRenderItems.push_back(e.get());
+void ClientMain::BuildSkyRenderItems()
+{
+	auto skyRitem = std::make_unique<RenderItem>();
+	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));
+	skyRitem->TexTransform = MathHelper::Identity4x4();
+	skyRitem->ObjCBIndex = 0;
+	skyRitem->Mat = mMaterials["sky"].get();
+	skyRitem->Geo = mGeometries["shapeGeo"].get();
+	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;
+	skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
+	skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
+
+    mRenderItems[(int)RenderLayer::Sky].push_back(skyRitem.get());
+	mAllRitems.push_back(std::move(skyRitem));
 }
 
 void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
@@ -1230,69 +1204,49 @@ std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> ClientMain::GetStaticSamplers()
 
 void ClientMain::BuildMaterials()
 {
-	auto bricks0 = std::make_unique<Material>();
-	bricks0->Name = "bricks0";
-	bricks0->MatCBIndex = 0;
-	bricks0->DiffuseSrvHeapIndex = 0;
-	bricks0->DiffuseAlbedo  = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	bricks0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	bricks0->Roughness = 0.1f;
+	std::vector<std::string> texNames =
+	{
+		"bricks0",
+		"stone0",
+		"checkboard",
+		"wirefence",
+        "bricks3", 
+        "ice",
+        "mirror0",
+        "sky", 
+        "skullMat", 
+	};
 
-	auto stone0 = std::make_unique<Material>();
-	stone0->Name = "stone0";
-	stone0->MatCBIndex = 1;
-	stone0->DiffuseSrvHeapIndex = 1;
-	stone0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	stone0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
-	stone0->Roughness = 0.3f;
+    int aIndex = 0;
 
-	auto checkboard = std::make_unique<Material>();
-	checkboard->Name = "checkboard";
-	checkboard->MatCBIndex = 2;
-	checkboard->DiffuseSrvHeapIndex = 2;
-	checkboard->DiffuseAlbedo  = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	checkboard->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	checkboard->Roughness = 0.2f;
+    auto SetMaterial = [&](
+        std::string pName, 
+        int pMatCBIndex, 
+        int pDiffuseSrvHeapIndex,
+        DirectX::XMFLOAT4 pDiffuseAlbedo,
+        DirectX::XMFLOAT3 pFresnelR0, 
+        float pRoughness )
+    {
+		auto aTemp = std::make_unique<Material>();
+        aTemp->Name = pName;
+        aTemp->MatCBIndex = aIndex;
+        aTemp->DiffuseSrvHeapIndex = pDiffuseSrvHeapIndex;
+        aTemp->DiffuseAlbedo = pDiffuseAlbedo;
+        aTemp->FresnelR0 = pFresnelR0;
+        aTemp->Roughness = pRoughness;
 
-	auto wirefence = std::make_unique<Material>();
-	wirefence->Name = "wirefence";
-	wirefence->MatCBIndex = 3;
-	wirefence->DiffuseSrvHeapIndex = 3; // BuildDescriptorHeaps 순서 !! 
-	wirefence->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	wirefence->FresnelR0 = XMFLOAT3(0.1f, 0.1f, 0.1f);
-	wirefence->Roughness = 0.25f;
+		mMaterials[texNames[aIndex]] = std::move(aTemp);
+        aIndex++;
+    };
 
-	auto bricks3 = std::make_unique<Material>();
-    bricks3->Name = "bricks3";
-    bricks3->MatCBIndex = 4;
-    bricks3->DiffuseSrvHeapIndex = 4;
-    bricks3->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-    bricks3->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-    bricks3->Roughness = 0.1f;
-
-
-	auto ice = std::make_unique<Material>();
-	ice->Name = "ice";
-	ice->MatCBIndex = 5;
-	ice->DiffuseSrvHeapIndex = 5;
-    ice->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 0.3f);
-    ice->FresnelR0 = XMFLOAT3(0.08f, 0.08f, 0.08f);
-    ice->Roughness = 0.4f;
-
-	//auto skullMat = std::make_unique<Material>();
-	//skullMat->Name = "skullMat";
-	//skullMat->MatCBIndex = 3;
-	//skullMat->DiffuseSrvHeapIndex = 3;
-	//skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	//skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
-	//skullMat->Roughness = 0.3f;
-
-	mMaterials["bricks0"] = std::move(bricks0);
-	mMaterials["stone0"] = std::move(stone0);
-	mMaterials["checkboard"] = std::move(checkboard);
-    mMaterials["wirefence"] = std::move(wirefence);
-    mMaterials["bricks3"] = std::move(bricks3);
-    mMaterials["ice"] = std::move(ice);
-	//mMaterials["skullMat"] = std::move(skullMat);
+    SetMaterial("bricks0", 0, 0,XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),XMFLOAT3(0.02f, 0.02f, 0.02f),0.1f);
+	SetMaterial("stone0", 1, 1, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	SetMaterial("checkboard",2,2, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.2f);
+	SetMaterial("wirefence",3,3, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 0.25f);
+	SetMaterial("bricks3",4,4, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.1f);
+    SetMaterial("ice",5,5,XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),XMFLOAT3(0.08f, 0.08f, 0.08f),0.4f);
+	SetMaterial("mirror0", 6, 3, XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f);
+	SetMaterial("sky", 7, 4, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 1.0f);
+	SetMaterial("skullMat", 8, 5, XMFLOAT4(0.8f, 0.8f, 0.8f, 1.0f), XMFLOAT3(0.2f, 0.2f, 0.2f), 0.2f);
 }
 
