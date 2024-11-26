@@ -177,15 +177,15 @@ struct MeshGeometry
     }
 };
 
-struct MaterialConstants
-{
-    DirectX::XMFLOAT4 DiffuseAlbedo = {1.0f, 1.0f, 1.0f, 1.0f};
-    DirectX::XMFLOAT3 FresnelR0 = {0.01f, 0.01f, 0.01f};
-    float Roughness = 0.25f;
-
-    // 텍스쳐 맵핑에서 사용됩니다.
-    DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
-};
+//struct MaterialConstants
+//{
+//    DirectX::XMFLOAT4 DiffuseAlbedo = {1.0f, 1.0f, 1.0f, 1.0f};
+//    DirectX::XMFLOAT3 FresnelR0 = {0.01f, 0.01f, 0.01f};
+//    float Roughness = 0.25f;
+//
+//    // 텍스쳐 맵핑에서 사용됩니다.
+//    DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
+//};
 
 struct Light
 {

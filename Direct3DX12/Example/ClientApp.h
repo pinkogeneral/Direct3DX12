@@ -126,6 +126,8 @@ private:
 
 	XMFLOAT3 mReflectTranslation = { 0.0f, 1.0f, -5.0f };
 
+	UINT mSkyTexHeapIndex = 0; //D3D12_DESCRIPTOR_HEAP_DESC 여기서 만들거 인덱스 ..
+
 	PassConstants mMainPassCB;
 	PassConstants mReflectedPassCB;
 
@@ -133,5 +135,6 @@ private:
 	RenderItem* mReflectedSkullRitem = nullptr;
 
 	Camera mCamera;
+
 	POINT mLastMousePos;
 };

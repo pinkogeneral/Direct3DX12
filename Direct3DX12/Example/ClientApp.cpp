@@ -68,7 +68,6 @@ bool ClientMain::Initialize()
     BuildSkyRenderItems(); 
     BuildRenderItems();
     BuildFrameResources();
-    //BuildConstantBufferViews();
     BuildPSOs();
 
     // 초기화 명령들을 실행시킵니다.
@@ -146,10 +145,20 @@ void ClientMain::Draw(const GameTimer& gt)
 
     mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+
+	auto matBuffer = mCurrFrameResource->MaterialCB->Resource();
+	mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE skyTexDescriptor(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	skyTexDescriptor.Offset(mSkyTexHeapIndex, mCbvSrvDescriptorSize);
+	mCommandList->SetGraphicsRootDescriptorTable(3, skyTexDescriptor);
+
+	mCommandList->SetGraphicsRootDescriptorTable(4, mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+
     UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
 
-    auto passCB = mCurrFrameResource->PassCB->Resource();
-    mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
     // 불투명한 항목 (바닥, 벽, 상자등을 그린다.)
 
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Opaque]);
@@ -164,12 +173,12 @@ void ClientMain::Draw(const GameTimer& gt)
 
     // 반사상을 거울 영역에만 그린다. (스텐실 버퍼 항목이 1인 픽셀들만 그려지게 한다) 이전과 다른 패스별 살수 버퍼를 지정해야 함을 주목하자.
     // 거울 평면에 대해 반사된 광원 설정을 담은 패스별 상수 버퍼를 지정한다.
-    mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress() + 1 * passCBByteSize);
+    mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress() + 1 * passCBByteSize);
     mCommandList->SetPipelineState(mPSOs["drawStencilReflections"].Get());
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Reflected]);
 
     // Restore main pass constants and stencil ref.
-    mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
+    mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
     mCommandList->OMSetStencilRef(0);
 
     // Draw mirror with transparency so reflection blends through.
@@ -285,6 +294,7 @@ void ClientMain::UpdateObjectCBs(const GameTimer& gt)
             ObjectConstants objConstants;
             XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
 			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
+			objConstants.MaterialIndex = e->Mat->MatCBIndex;
 
             currObjectCB->CopyData(e->ObjCBIndex, objConstants);
 
@@ -305,12 +315,14 @@ void ClientMain::UpdateMaterialCBs(const GameTimer& gt)
         {
             XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform); 
 
-            MaterialConstants matConstants; 
-            matConstants.DiffuseAlbedo = mat->DiffuseAlbedo;
-            matConstants.FresnelR0 = mat->FresnelR0; 
-            matConstants.Roughness = mat->Roughness; 
-            XMStoreFloat4x4(&matConstants.MatTransform, XMMatrixTranspose(matTransform));
-            currMaterialCB->CopyData(mat->MatCBIndex, matConstants); 
+			MaterialData matData;
+			matData.DiffuseAlbedo = mat->DiffuseAlbedo;
+			matData.FresnelR0 = mat->FresnelR0;
+			matData.Roughness = mat->Roughness;
+			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
+			matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
+
+            currMaterialCB->CopyData(mat->MatCBIndex, matData);
 
             mat->NumFramesDirty--; 
         }
@@ -417,13 +429,12 @@ void ClientMain::BuildDescriptorHeaps()
     // 텍스처 자원을 성공적으로 생성했다면, SRV서술자를 생성해야한다. 
     // 셰이더 프로그램이 사용할 루트 서명 매개변수 슬롯에 설정할 수 있다. 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 4;
+	srvHeapDesc.NumDescriptors = 8;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
 
     //D3D12_SHADER_RESOURCE_VIEW_DESC 이구조체는 자원의 용도와 기타 정보 (형식, 차원, 밉맵 개수등)를 서술하는 역할을 한다. 
-
     // 힙의 시작을 가리키는 포인터를 얻는다. 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
@@ -433,6 +444,8 @@ void ClientMain::BuildDescriptorHeaps()
     auto fenceTex = mTextures["fenceTex"]->Resource;
     auto bricks03Tex = mTextures["brick3Tex"]->Resource;
 	auto iceTex = mTextures["iceTex"]->Resource;
+	auto defaultDiffuseMapTex = mTextures["defaultDiffuseMap"]->Resource;
+	auto skyCubeMapTex = mTextures["skyCubeMap"]->Resource;
 
     // Shader4ComponentMapping : 셰이더에서 텍스처의 표본을 추출하면 지정된 텍스처 좌표에 잇는 텍스처 자료를 담은 벡터가 반환된다.
     // Format : 자원의 형식 DXGI_FORMAT
@@ -440,7 +453,8 @@ void ClientMain::BuildDescriptorHeaps()
     // MostDetailedMip : 이 뷰에 대해 가장 세부적인 밉맵 수준의 인덱스를 지정한다. 
     // ResourceMinLODClamp : 접근 가능한 최소 밉맵 수준을 지정한다. 
 
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    // -- (0)
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; 
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Format = bricksTex->GetDesc().Format; 
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -450,28 +464,49 @@ void ClientMain::BuildDescriptorHeaps()
 	md3dDevice->CreateShaderResourceView(bricksTex.Get(), &srvDesc, hDescriptor);
 
     // 힙의 다음 서술자로 넘어간다. 
+    // -- (1)
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 	srvDesc.Format = stoneTex->GetDesc().Format;
 	md3dDevice->CreateShaderResourceView(stoneTex.Get(), &srvDesc, hDescriptor);
 
     // 힙의 다음 서술자로 넘어간다. 
+    // -- (2)
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 	srvDesc.Format = tileTex->GetDesc().Format;
 	md3dDevice->CreateShaderResourceView(tileTex.Get(), &srvDesc, hDescriptor);
    
     // 힙의 다음 서술자로 넘어간다. 
+    // -- (3)
     hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 	srvDesc.Format = fenceTex->GetDesc().Format;
 	md3dDevice->CreateShaderResourceView(fenceTex.Get(), &srvDesc, hDescriptor);
 
+    // -- (4)
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 	srvDesc.Format = bricks03Tex->GetDesc().Format;
 	md3dDevice->CreateShaderResourceView(bricks03Tex.Get(), &srvDesc, hDescriptor);
 
+    // -- (5)
 	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 	srvDesc.Format = iceTex->GetDesc().Format;
 	md3dDevice->CreateShaderResourceView(iceTex.Get(), &srvDesc, hDescriptor);
 
+    // -- (6)
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	srvDesc.Format = defaultDiffuseMapTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(defaultDiffuseMapTex.Get(), &srvDesc, hDescriptor);
+
+    // -- (7)
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+    // sky : 입방체 맵 텍스처 자원에 대한 SRV ()
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+	srvDesc.TextureCube.MostDetailedMip = 0;
+	srvDesc.TextureCube.MipLevels = skyCubeMapTex->GetDesc().MipLevels;
+	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	srvDesc.Format = skyCubeMapTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(skyCubeMapTex.Get(), &srvDesc, hDescriptor);
+
+    mSkyTexHeapIndex = 7; 
 }
 
 void ClientMain::BuildConstantBufferViews()
@@ -480,45 +515,29 @@ void ClientMain::BuildConstantBufferViews()
 
 void ClientMain::BuildRootSignature()
 {
-    // Texture2D    gDiffuseMap : register(t0);
-    // sampler 
-	CD3DX12_DESCRIPTOR_RANGE texTable; 
-    texTable.Init(
-		D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-		1,  // number of descriptors
-		0); // register (t0)
-
+	CD3DX12_DESCRIPTOR_RANGE texTable0;
+	texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
 
 	CD3DX12_DESCRIPTOR_RANGE texTable1;
-	texTable1.Init(
-        D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-        5,
-        1,
-        0);
+	texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 9, 1, 0);
 
-
-    // 루트 파라미터는 테이블, 루트 디스크립터, 루트 상수가 될 수 있습니다.
-    CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+	// Root parameter can be a table, root descriptor or root constants.
+	CD3DX12_ROOT_PARAMETER slotRootParameter[5];
 
 
     // 퍼포먼스 TIP : 가장 자주 발생하는 것 부터 가장 적게 발생하는 것 순으로 정렬한다.
     // 루트 CBV를 생성합니다.
-	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
-	slotRootParameter[1].InitAsConstantBufferView(0); // register (b0)
-	slotRootParameter[2].InitAsConstantBufferView(1); // register (b1)
-	slotRootParameter[3].InitAsConstantBufferView(2); // register (b2)
+	slotRootParameter[0].InitAsConstantBufferView(0); // register (b0) --> cbPerObject
+	slotRootParameter[1].InitAsConstantBufferView(1); // register (b1) --> CbPass
+	slotRootParameter[2].InitAsShaderResourceView(0, 1);
+	slotRootParameter[3].InitAsDescriptorTable(1, &texTable0, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParameter[4].InitAsDescriptorTable(1, &texTable1, D3D12_SHADER_VISIBILITY_PIXEL);
 
     auto staticSamplers = GetStaticSamplers(); //(s0 ~ s5)
 
     // 루트 시그네쳐는 루트 파라미터 배열입니다.
-    // CD3DX12_ROOT_SIGNATURE_DESC
-    // UINT numParameters,
-    // const D3D12_ROOT_PARAMETER * _pParameters,
-    // UINT numStaticSamplers = 0,
-    // const D3D12_STATIC_SAMPLER_DESC * _pStaticSamplers = NULL,
-    // D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE)
 
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(5, slotRootParameter,
         (UINT)staticSamplers.size(), staticSamplers.data(),
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -560,9 +579,10 @@ void ClientMain::BuildShadersAndInputLayout()
     mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\default.hlsl", nullptr, "VS", "vs_5_1");
     mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\default.hlsl", defines, "PS", "ps_5_1");
 	mShaders["alphaTestedPS"] = d3dUtil::CompileShader(L"Shaders\\default.hlsl", alphaTestDefines, "PS", "ps_5_1");
+
 	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\sky.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\sky.hlsl", nullptr, "PS", "ps_5_1");
-	
+
     mInputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -579,7 +599,6 @@ void ClientMain::BuildShapeGeometry()
     GeometryGenerator::MeshData wall = geoGen.CreateWall(30.0f, 30.0f);
     GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
     GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
-    //GeometryGenerator::MeshData Skull = geoGen.CreateSkull();
     //
     // 모든 지오메트리를 하나의 큰 버텍스/인덱스 버퍼에 연결해서 저장합니다.
     // 그러므로 각각의 서브메쉬가 버퍼에서 차지하는 영역을 정의합니다.
@@ -592,16 +611,11 @@ void ClientMain::BuildShapeGeometry()
     UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
     UINT wallVertexOffset = cylinderVertexOffset + (UINT)cylinder.Vertices.size();
 
-    //UINT SkullVertexOffset = cylinderVertexOffset + (UINT)cylinder.Vertices.size();
-    // 연결된 인덱스 버퍼에서 각 오브젝트의 시작 인덱스를 캐시합니다.
     UINT boxIndexOffset = 0;
     UINT gridIndexOffset = (UINT)box.Indices32.size();
     UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
     UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
     UINT wallIndexOffset = cylinderIndexOffset + (UINT)cylinder.Indices32.size();;
-
-    //UINT SkullIndexOffset = cylinderIndexOffset + (UINT)cylinder.Indices32.size();;
-    // 버텍스/인덱스 버퍼에서 각 도형을 정의하는 서브메쉬 지오메트리를 정의합니다.
     
     SubmeshGeometry boxSubmesh;
     boxSubmesh.IndexCount = (UINT)box.Indices32.size();
@@ -627,15 +641,6 @@ void ClientMain::BuildShapeGeometry()
     WallSubmesh.IndexCount = (UINT)wall.Indices32.size();
     WallSubmesh.StartIndexLocation = wallIndexOffset;
     WallSubmesh.BaseVertexLocation = wallVertexOffset;
-
-    //SubmeshGeometry SkullSubmesh;
-    //SkullSubmesh.IndexCount = (UINT)Skull.Indices32.size();
-    //SkullSubmesh.StartIndexLocation = SkullIndexOffset;
-    //SkullSubmesh.BaseVertexLocation = SkullVertexOffset;
-    //
-    // 필요한 버텍스 엘리먼트들을 추출하고
-    // 모든 메쉬의 버텍스를 한 버텍스 버퍼에 저장합니다.
-    //
 
     auto totalVertexCount =
         box.Vertices.size() +
@@ -684,13 +689,6 @@ void ClientMain::BuildShapeGeometry()
 		vertices[k].TexC = wall.Vertices[i].TexC;
 	}
 
-    //for (size_t i = 0; i < Skull.Vertices.size(); ++i, ++k)
-    //{
-    //    vertices[k].Pos = Skull.Vertices[i].Position;
-    //    vertices[k].Normal = Skull.Vertices[i].Normal;
-    //    vertices[k].TexC = Skull.Vertices[i].TexC;
-    //}
-
     std::vector<std::uint16_t> indices;
     indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
     indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
@@ -730,9 +728,7 @@ void ClientMain::BuildShapeGeometry()
     geo->DrawArgs["grid"] = gridSubmesh;
     geo->DrawArgs["sphere"] = sphereSubmesh;
     geo->DrawArgs["cylinder"] = cylinderSubmesh;
-    geo->DrawArgs["wall"] = WallSubmesh;
-   // geo->DrawArgs["Skull"] = SkullSubmesh;
-    
+    geo->DrawArgs["wall"] = WallSubmesh;    
     mGeometries[geo->Name] = std::move(geo);
 }
 
@@ -1098,7 +1094,7 @@ void ClientMain::BuildSkyRenderItems()
 	auto skyRitem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));
 	skyRitem->TexTransform = MathHelper::Identity4x4();
-	skyRitem->ObjCBIndex = 0;
+	skyRitem->ObjCBIndex = 45;
 	skyRitem->Mat = mMaterials["sky"].get();
 	skyRitem->Geo = mGeometries["shapeGeo"].get();
 	skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -1113,18 +1109,12 @@ void ClientMain::BuildSkyRenderItems()
 void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
 {
     UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
-
     auto objectCB = mCurrFrameResource->ObjectCB->Resource();
-    auto matCB = mCurrFrameResource->MaterialCB->Resource();
 
     // 각 렌더 항목에 대해서...
     for (size_t i = 0; i < ritems.size(); ++i)
     {
         auto ri = ritems[i];
-
-        //if (ri == nullptr) 
-        //    continue;
 
         cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
         cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
@@ -1135,13 +1125,8 @@ void ClientMain::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::
 		tex.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvDescriptorSize);
 
         D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize; 
-		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
 
-
-		cmdList->SetGraphicsRootDescriptorTable(0, tex); 
-        cmdList->SetGraphicsRootConstantBufferView(1, objCBAddress);
-		cmdList->SetGraphicsRootConstantBufferView(3, matCBAddress);
-
+		cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
 
         cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
@@ -1229,14 +1214,13 @@ void ClientMain::BuildMaterials()
     {
 		auto aTemp = std::make_unique<Material>();
         aTemp->Name = pName;
-        aTemp->MatCBIndex = aIndex;
+        aTemp->MatCBIndex = pMatCBIndex;
         aTemp->DiffuseSrvHeapIndex = pDiffuseSrvHeapIndex;
         aTemp->DiffuseAlbedo = pDiffuseAlbedo;
         aTemp->FresnelR0 = pFresnelR0;
         aTemp->Roughness = pRoughness;
 
-		mMaterials[texNames[aIndex]] = std::move(aTemp);
-        aIndex++;
+		mMaterials[texNames[pMatCBIndex]] = std::move(aTemp);
     };
 
     SetMaterial("bricks0", 0, 0,XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),XMFLOAT3(0.02f, 0.02f, 0.02f),0.1f);
@@ -1244,9 +1228,10 @@ void ClientMain::BuildMaterials()
 	SetMaterial("checkboard",2,2, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.2f);
 	SetMaterial("wirefence",3,3, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 0.25f);
 	SetMaterial("bricks3",4,4, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.1f);
-    SetMaterial("ice",5,5,XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),XMFLOAT3(0.08f, 0.08f, 0.08f),0.4f);
-	SetMaterial("mirror0", 6, 3, XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f);
-	SetMaterial("sky", 7, 4, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 1.0f);
-	SetMaterial("skullMat", 8, 5, XMFLOAT4(0.8f, 0.8f, 0.8f, 1.0f), XMFLOAT3(0.2f, 0.2f, 0.2f), 0.2f);
+    SetMaterial("ice",5,5,XMFLOAT4(1.0f, 1.0f, 1.0f, 0.3f),XMFLOAT3(0.08f, 0.08f, 0.08f),0.4f);
+
+
+	SetMaterial("mirror0", 6, 6, XMFLOAT4(0.0f, 0.0f, 0.0f, 0.5f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f);
+	SetMaterial("sky", 7, 7, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 1.0f);
 }
 

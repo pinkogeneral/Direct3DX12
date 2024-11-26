@@ -13,10 +13,25 @@
 
 #include "LightingUtil.hlsl"
 
+struct MaterialData
+{
+	float4   DiffuseAlbedo;
+	float3   FresnelR0;
+	float    Roughness;
+
+	float4x4 MatTransform;
+	
+    uint     DiffuseMapIndex;
+	uint     MatPad0;
+	uint     MatPad1;
+	uint     MatPad2;
+};
+
 TextureCube gCubeMap : register(t0);
 
-Texture2D    gDiffuseMap : register(t0);
+Texture2D gDiffuseMap[8] : register(t1);
 
+StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
 
 SamplerState gsamPointWrap        : register(s0);
 SamplerState gsamPointClamp       : register(s1);
@@ -30,6 +45,10 @@ cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
 	float4x4 gTexTransform;
+    uint gMaterialIndex;
+	uint gObjPad0;
+	uint gObjPad1;
+	uint gObjPad2;
 };
 
 // Constant data that varies per pass.
@@ -51,6 +70,7 @@ cbuffer cbPass : register(b1)
     float gFarZ;
     float gTotalTime;
     float gDeltaTime;
+
     float4 gAmbientLight;
 
 	// Allow application to change fog parameters once per frame.
@@ -65,12 +85,4 @@ cbuffer cbPass : register(b1)
     // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
     // are spot lights for a maximum of MaxLights per object.
     Light gLights[MaxLights];
-};
-
-cbuffer cbMaterial : register(b2)
-{
-	float4   gDiffuseAlbedo;
-    float3   gFresnelR0;
-    float    gRoughness;
-	float4x4 gMatTransform;
 };

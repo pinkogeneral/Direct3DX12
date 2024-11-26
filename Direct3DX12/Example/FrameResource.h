@@ -29,10 +29,12 @@ struct PassConstants
 	DirectX::XMFLOAT4X4 InvProj = MathHelper::Identity4x4();
 	DirectX::XMFLOAT4X4 ViewProj = MathHelper::Identity4x4();
 	DirectX::XMFLOAT4X4 InvViewProj = MathHelper::Identity4x4();
+
 	DirectX::XMFLOAT3 EyePosW = { 0.0f, 0.0f, 0.0f };
 	float cbPerObjectPad1 = 0.0f;
 	DirectX::XMFLOAT2 RenderTargetSize = { 0.0f, 0.0f };
 	DirectX::XMFLOAT2 InvRenderTargetSize = { 0.0f, 0.0f };
+
 	float NearZ = 0.0f;
 	float FarZ = 0.0f;
 	float TotalTime = 0.0f;
@@ -49,6 +51,20 @@ struct PassConstants
 	Light mLight[MaxLights];
 };
 
+struct MaterialData
+{
+	DirectX::XMFLOAT4 DiffuseAlbedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+	DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
+	float Roughness = 0.5f;
+
+	// Used in texture mapping.
+	DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
+
+	UINT DiffuseMapIndex = 0;
+	UINT MaterialPad0;
+	UINT MaterialPad1;
+	UINT MaterialPad2;
+};
 
 // CPU에서 한 프레임을 그리기 위한 커맨드들을 기록하기 위한 리소스들을 저장합니다.
 struct FrameResource
@@ -66,7 +82,7 @@ public:
 	// GPU가 모든 명령들을 처리하기 전까지 상수 버퍼를 업데이트 할 수 없습니다.
 	// 그러므로 매 프레임마다 상수 버퍼가 필요합니다.
 	std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
-	std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
+	std::unique_ptr<UploadBuffer<MaterialData>> MaterialCB = nullptr;
 	std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
 
 	// 펜스 값은 현재 펜스 지점까지의 명령들을 표시합니다.
