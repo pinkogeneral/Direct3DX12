@@ -13,6 +13,12 @@
     <FxCompile Include="Shaders\sky.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
+    <FxCompile Include="Shadows.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="ShadowDebug.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Common\Camera.cpp">

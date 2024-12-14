@@ -4,6 +4,8 @@
 #include "../Common/GeometryGenerator.h"
 #include "../Common/Camera.h"
 #include "FrameResource.h"
+#include "ShadowMap.h"
+
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -94,6 +96,8 @@ private:
 	void BuildSkyRenderItems();
 	void BuildMaterials();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
+	void DrawSceneToShadowMap();
+
 
 	// 정적 표본추출기 : 셰이더에서 쓰인다. 셰이더에서 표본추출기를 사용하려면 표본추출기 객체에 대한 서술자를
 	// 원하는 셰이더에 묶어야 한다. 
@@ -118,6 +122,8 @@ private:
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 
+	std::unique_ptr<ShadowMap> mShadowMap;
+
 	// 렌더 아이템 목록.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
 
@@ -127,6 +133,11 @@ private:
 	XMFLOAT3 mReflectTranslation = { 0.0f, 1.0f, -5.0f };
 
 	UINT mSkyTexHeapIndex = 0; //D3D12_DESCRIPTOR_HEAP_DESC 여기서 만들거 인덱스 ..
+	UINT mShadowMapHeapIndex = 0;
+	UINT mNullCubeSrvIndex = 0; 
+	UINT mNullTexSrvIndex = 0;
+	
+	CD3DX12_GPU_DESCRIPTOR_HANDLE mNullSrv;
 
 	PassConstants mMainPassCB;
 	PassConstants mReflectedPassCB;
