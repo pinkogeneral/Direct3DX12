@@ -468,10 +468,10 @@ GeometryGenerator::MeshData GeometryGenerator::CreateWall(float height, float de
 	float dv = 1.0f / (m - 1);
 
 	meshData.Vertices.resize(vertexCount);
-	for (uint32 i = 0; i < m; ++i)
+	for (uint32 i = 0; i < static_cast<uint32>(m); ++i)
 	{
 		float z = halfDepth - i * dz;
-		for (uint32 j = 0; j < n; ++j)
+		for (uint32 j = 0; j < static_cast<uint32>(n); ++j)
 		{
 			float y = -halfHeight + j * dx;
 
@@ -493,9 +493,9 @@ GeometryGenerator::MeshData GeometryGenerator::CreateWall(float height, float de
 
 	// Iterate over each quad and compute indices.
 	uint32 k = 0;
-	for (uint32 i = 0; i < m - 1; ++i)
+	for (uint32 i = 0; i < static_cast<uint32>(m - 1); ++i)
 	{
-		for (uint32 j = 0; j < n - 1; ++j)
+		for (uint32 j = 0; j < static_cast<uint32>(n - 1); ++j)
 		{
 			meshData.Indices32[k] = i * n + j;
 			meshData.Indices32[k + 1] = i * n + j + 1;

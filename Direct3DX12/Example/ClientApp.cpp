@@ -67,6 +67,7 @@ bool ClientMain::Initialize()
     BuildMaterials();
     BuildSkyRenderItems(); 
     BuildRenderItems();
+
     BuildFrameResources();
     BuildPSOs();
 
@@ -295,7 +296,6 @@ void ClientMain::UpdateObjectCBs(const GameTimer& gt)
             XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
 			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
 			objConstants.MaterialIndex = e->Mat->MatCBIndex;
-
             currObjectCB->CopyData(e->ObjCBIndex, objConstants);
 
             // 다음 프레임 리소스도 마찬가지로 업데이트 되어야 합니다.
@@ -321,6 +321,8 @@ void ClientMain::UpdateMaterialCBs(const GameTimer& gt)
 			matData.Roughness = mat->Roughness;
 			XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
 			matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
+			matData.NormalMapIndex = mat->NormalSrvHeapIndex;
+
 
             currMaterialCB->CopyData(mat->MatCBIndex, matData);
 
@@ -389,26 +391,37 @@ void ClientMain::LoadTexture()
 {
 	std::vector<std::string> texNames =
 	{
-		"bricksTex",
-		"stoneTex",
-		"checkboardTex",
-		"fenceTex",
-        "brick3Tex",
-        "iceTex",
-		"defaultDiffuseMap",
-		"skyCubeMap",
+		"bricks",
+        "brick2",
+        "tile",
+		"stone",
+		"checkboard",
+		"WireFence",
+        "ice",
+		"white1x1",
+        "bricks_nmap",
+        "bricks2_nmap",
+        "tile_nmap",
+        "default_nmap",
+        "skyCubeMap",
 	};
 
 	std::vector<std::wstring> texFilenames =
 	{
 		L"../Textures/bricks.dds",
+        L"../Textures/bricks2.dds",
+        L"../Textures/tile.dds",
 		L"../Textures/stone.dds",
 		L"../Textures/checkboard.dds",
 		L"../Textures/WireFence.dds", 
-        L"../Textures/bricks3.dds",
         L"../Textures/ice.dds",
 		L"../Textures/white1x1.dds",
-		L"../Textures/grasscube1024.dds"
+		L"../Textures/bricks_nmap.dds",
+		L"../Textures/bricks2_nmap.dds",
+		L"../Textures/tile_nmap.dds",
+        L"../Textures/default_nmap.dds",
+
+		L"../Textures/grasscube1024.dds",
 	};
 
 	for (int i = 0; i < (int)texNames.size(); ++i)
@@ -429,7 +442,7 @@ void ClientMain::BuildDescriptorHeaps()
     // 텍스처 자원을 성공적으로 생성했다면, SRV서술자를 생성해야한다. 
     // 셰이더 프로그램이 사용할 루트 서명 매개변수 슬롯에 설정할 수 있다. 
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 8;
+	srvHeapDesc.NumDescriptors = 20;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -437,76 +450,55 @@ void ClientMain::BuildDescriptorHeaps()
     //D3D12_SHADER_RESOURCE_VIEW_DESC 이구조체는 자원의 용도와 기타 정보 (형식, 차원, 밉맵 개수등)를 서술하는 역할을 한다. 
     // 힙의 시작을 가리키는 포인터를 얻는다. 
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+    std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> tex2DList =
+    {
+		mTextures["bricks"]->Resource,          // 0
+		mTextures["brick2"]->Resource,          // 1
+		mTextures["tile"]->Resource,            // 2
+		mTextures["stone"]->Resource,           // 3
+		mTextures["checkboard"]->Resource,      // 4
+		mTextures["WireFence"]->Resource,       // 5
+		mTextures["ice"]->Resource,             // 6
+		mTextures["white1x1"]->Resource,        // 7
+		mTextures["bricks_nmap"]->Resource,     // 8
+		mTextures["bricks2_nmap"]->Resource,    // 9
+		mTextures["tile_nmap"]->Resource,       // 10
+        mTextures["default_nmap"]->Resource     // 11
+    };
+    auto skyCubeMap = mTextures["skyCubeMap"]->Resource;
 
-	auto bricksTex = mTextures["bricksTex"]->Resource;
-	auto stoneTex = mTextures["stoneTex"]->Resource;
-	auto tileTex = mTextures["checkboardTex"]->Resource;
-    auto fenceTex = mTextures["fenceTex"]->Resource;
-    auto bricks03Tex = mTextures["brick3Tex"]->Resource;
-	auto iceTex = mTextures["iceTex"]->Resource;
-	auto defaultDiffuseMapTex = mTextures["defaultDiffuseMap"]->Resource;
-	auto skyCubeMapTex = mTextures["skyCubeMap"]->Resource;
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+
+	for (UINT i = 0; i < (UINT)tex2DList.size(); ++i)
+	{
+		srvDesc.Format = tex2DList[i]->GetDesc().Format;
+		srvDesc.Texture2D.MipLevels = tex2DList[i]->GetDesc().MipLevels;
+		md3dDevice->CreateShaderResourceView(tex2DList[i].Get(), &srvDesc, hDescriptor);
+
+		// next descriptor
+		hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	}
+
+	// -- (7)
+	// sky : 입방체 맵 텍스처 자원에 대한 SRV ()
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+	srvDesc.TextureCube.MostDetailedMip = 0;
+	srvDesc.TextureCube.MipLevels = skyCubeMap->GetDesc().MipLevels;
+	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	srvDesc.Format = skyCubeMap->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(skyCubeMap.Get(), &srvDesc, hDescriptor);
+
+	mSkyTexHeapIndex = static_cast<UINT>(tex2DList.size());
 
     // Shader4ComponentMapping : 셰이더에서 텍스처의 표본을 추출하면 지정된 텍스처 좌표에 잇는 텍스처 자료를 담은 벡터가 반환된다.
     // Format : 자원의 형식 DXGI_FORMAT
     // ViewDimension : 자원의 차원 2차원 , 3차원 등등 .. 
     // MostDetailedMip : 이 뷰에 대해 가장 세부적인 밉맵 수준의 인덱스를 지정한다. 
     // ResourceMinLODClamp : 접근 가능한 최소 밉맵 수준을 지정한다. 
-
-    // -- (0)
-	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; 
-	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Format = bricksTex->GetDesc().Format; 
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.Texture2D.MipLevels = -1;
-	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
-	md3dDevice->CreateShaderResourceView(bricksTex.Get(), &srvDesc, hDescriptor);
-
-    // 힙의 다음 서술자로 넘어간다. 
-    // -- (1)
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = stoneTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(stoneTex.Get(), &srvDesc, hDescriptor);
-
-    // 힙의 다음 서술자로 넘어간다. 
-    // -- (2)
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = tileTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(tileTex.Get(), &srvDesc, hDescriptor);
-   
-    // 힙의 다음 서술자로 넘어간다. 
-    // -- (3)
-    hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = fenceTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(fenceTex.Get(), &srvDesc, hDescriptor);
-
-    // -- (4)
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = bricks03Tex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(bricks03Tex.Get(), &srvDesc, hDescriptor);
-
-    // -- (5)
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = iceTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(iceTex.Get(), &srvDesc, hDescriptor);
-
-    // -- (6)
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = defaultDiffuseMapTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(defaultDiffuseMapTex.Get(), &srvDesc, hDescriptor);
-
-    // -- (7)
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-    // sky : 입방체 맵 텍스처 자원에 대한 SRV ()
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-	srvDesc.TextureCube.MostDetailedMip = 0;
-	srvDesc.TextureCube.MipLevels = skyCubeMapTex->GetDesc().MipLevels;
-	srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
-	srvDesc.Format = skyCubeMapTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(skyCubeMapTex.Get(), &srvDesc, hDescriptor);
-
-    mSkyTexHeapIndex = 7; 
 }
 
 void ClientMain::BuildConstantBufferViews()
@@ -519,7 +511,7 @@ void ClientMain::BuildRootSignature()
 	texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
 
 	CD3DX12_DESCRIPTOR_RANGE texTable1;
-	texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 9, 1, 0);
+	texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 20, 1, 0);
 
 	// Root parameter can be a table, root descriptor or root constants.
 	CD3DX12_ROOT_PARAMETER slotRootParameter[5];
@@ -588,6 +580,7 @@ void ClientMain::BuildShadersAndInputLayout()
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 }
 
@@ -648,8 +641,6 @@ void ClientMain::BuildShapeGeometry()
         sphere.Vertices.size() +
         cylinder.Vertices.size() + 
         wall.Vertices.size();
-    // +
-       // Skull.Vertices.size();
 
     std::vector<Vertex> vertices(totalVertexCount);
 
@@ -659,6 +650,7 @@ void ClientMain::BuildShapeGeometry()
         vertices[k].Pos = box.Vertices[i].Position;
         vertices[k].Normal = box.Vertices[i].Normal;
         vertices[k].TexC = box.Vertices[i].TexC;
+        vertices[k].TangentU = box.Vertices[i].TangentU; 
     }
 
     for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
@@ -666,6 +658,8 @@ void ClientMain::BuildShapeGeometry()
         vertices[k].Pos = grid.Vertices[i].Position;
         vertices[k].Normal = grid.Vertices[i].Normal;
         vertices[k].TexC = grid.Vertices[i].TexC;
+		vertices[k].TangentU = grid.Vertices[i].TangentU;
+
     }
 
     for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
@@ -673,6 +667,7 @@ void ClientMain::BuildShapeGeometry()
         vertices[k].Pos = sphere.Vertices[i].Position;
         vertices[k].Normal = sphere.Vertices[i].Normal;
         vertices[k].TexC = sphere.Vertices[i].TexC;
+		vertices[k].TangentU = sphere.Vertices[i].TangentU;
     }
 
     for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
@@ -680,6 +675,7 @@ void ClientMain::BuildShapeGeometry()
         vertices[k].Pos = cylinder.Vertices[i].Position;
         vertices[k].Normal = cylinder.Vertices[i].Normal;
         vertices[k].TexC = cylinder.Vertices[i].TexC;
+        vertices[k].TangentU = cylinder.Vertices[i].TangentU;
     }
 
 	for (size_t i = 0; i < wall.Vertices.size(); ++i, ++k)
@@ -687,6 +683,7 @@ void ClientMain::BuildShapeGeometry()
 		vertices[k].Pos = wall.Vertices[i].Position;
 		vertices[k].Normal = wall.Vertices[i].Normal;
 		vertices[k].TexC = wall.Vertices[i].TexC;
+        vertices[k].TangentU = wall.Vertices[i].TangentU;
 	}
 
     std::vector<std::uint16_t> indices;
@@ -695,7 +692,6 @@ void ClientMain::BuildShapeGeometry()
     indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
     indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
     indices.insert(indices.end(), std::begin(wall.GetIndices16()), std::end(wall.GetIndices16()));
-    //indices.insert(indices.end(), std::begin(Skull.GetIndices16()), std::end(Skull.GetIndices16()));
 
     const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
     const UINT ibByteSize = (UINT)indices.size()  * sizeof(std::uint16_t);
@@ -901,7 +897,7 @@ void ClientMain::BuildRenderItems()
 	XMStoreFloat4x4(&boxRitem->TexTransform, XMMatrixScaling(1.0f, 1.0f, 1.0f));
     boxRitem->ObjCBIndex = 0;
     boxRitem->Geo = mGeometries["shapeGeo"].get();
-    boxRitem->Mat = mMaterials["wirefence"].get();
+    boxRitem->Mat = mMaterials["WireFence"].get();
     boxRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     boxRitem->IndexCount = (UINT)boxRitem->Geo->DrawArgs["box"].IndexCount;
     boxRitem->StartIndexLocation = boxRitem->Geo->DrawArgs["box"].StartIndexLocation;
@@ -937,7 +933,7 @@ void ClientMain::BuildRenderItems()
 	XMStoreFloat4x4(&gridRitem->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
     gridRitem->ObjCBIndex = 2;
     gridRitem->Geo = mGeometries["shapeGeo"].get();
-    gridRitem->Mat = mMaterials["checkboard"].get();
+    gridRitem->Mat = mMaterials["tile"].get();
     gridRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     gridRitem->IndexCount = gridRitem->Geo->DrawArgs["grid"].IndexCount;
     gridRitem->StartIndexLocation = gridRitem->Geo->DrawArgs["grid"].StartIndexLocation;
@@ -950,7 +946,7 @@ void ClientMain::BuildRenderItems()
     XMStoreFloat4x4(&wallRitem->World, XMMatrixTranslation(-0.8f, 0.0f, 0.0f));
     wallRitem->ObjCBIndex = 3;
     wallRitem->Geo = mGeometries["shapeGeo"].get();
-    wallRitem->Mat = mMaterials["bricks3"].get();
+    wallRitem->Mat = mMaterials["brick2"].get();
     wallRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     wallRitem->IndexCount = wallRitem->Geo->DrawArgs["wall"].IndexCount;
     wallRitem->StartIndexLocation = wallRitem->Geo->DrawArgs["wall"].StartIndexLocation;
@@ -990,7 +986,7 @@ void ClientMain::BuildRenderItems()
         XMStoreFloat4x4(&leftCylRitem->TexTransform, brickTexTransform);
         leftCylRitem->ObjCBIndex = objCBIndex++;
         leftCylRitem->Geo = mGeometries["shapeGeo"].get();
-        leftCylRitem->Mat = mMaterials["bricks0"].get();
+        leftCylRitem->Mat = mMaterials["bricks"].get();
         leftCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         leftCylRitem->IndexCount = leftCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
         leftCylRitem->StartIndexLocation = leftCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -1006,7 +1002,7 @@ void ClientMain::BuildRenderItems()
 
 		*reflectedleftCylRitem = *leftCylRitem;
         reflectedleftCylRitem->ObjCBIndex = objCBIndex++;
-        reflectedleftCylRitem->Mat = mMaterials["bricks0"].get();
+        reflectedleftCylRitem->Mat = mMaterials["bricks"].get();
 		//XMStoreFloat4x4(&reflectedleftCylRitem->World, ReflectWorld);
         XMStoreFloat4x4(&reflectedleftCylRitem->World, ReflectWorld * R);
         mRenderItems[(int)RenderLayer::Reflected].push_back(reflectedleftCylRitem.get());
@@ -1017,7 +1013,7 @@ void ClientMain::BuildRenderItems()
 		XMStoreFloat4x4(&rightCylRitem->TexTransform, brickTexTransform);
         rightCylRitem->ObjCBIndex = objCBIndex++;
         rightCylRitem->Geo = mGeometries["shapeGeo"].get();
-        rightCylRitem->Mat = mMaterials["bricks0"].get();
+        rightCylRitem->Mat = mMaterials["bricks"].get();
         rightCylRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         rightCylRitem->IndexCount = rightCylRitem->Geo->DrawArgs["cylinder"].IndexCount;
         rightCylRitem->StartIndexLocation = rightCylRitem->Geo->DrawArgs["cylinder"].StartIndexLocation;
@@ -1027,7 +1023,7 @@ void ClientMain::BuildRenderItems()
 		auto reflectedrightCylRitem = std::make_unique<RenderItem>();
 		*reflectedrightCylRitem = *rightCylRitem;
 		reflectedrightCylRitem->ObjCBIndex = objCBIndex++;
-		reflectedrightCylRitem->Mat = mMaterials["bricks0"].get();
+		reflectedrightCylRitem->Mat = mMaterials["bricks"].get();
 
 		ReflectOffset = XMMatrixTranslation(20.0f, rightCylRitem->World._42, rightCylRitem->World._43 );
 		ReflectWorld = ReflectRotate * ReflectOffset;
@@ -1040,7 +1036,7 @@ void ClientMain::BuildRenderItems()
 		XMStoreFloat4x4(&leftSphereRitem->TexTransform, brickTexTransform);
 		leftSphereRitem->ObjCBIndex = objCBIndex++;
 		leftSphereRitem->Geo = mGeometries["shapeGeo"].get();
-		leftSphereRitem->Mat = mMaterials["bricks0"].get();
+		leftSphereRitem->Mat = mMaterials["white1x1"].get();
 		leftSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		leftSphereRitem->IndexCount = leftSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		leftSphereRitem->StartIndexLocation = leftSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -1050,7 +1046,7 @@ void ClientMain::BuildRenderItems()
 		auto reflectedleftSphereRitem = std::make_unique<RenderItem>();
 		*reflectedleftSphereRitem = *leftSphereRitem;
 		reflectedleftSphereRitem->ObjCBIndex = objCBIndex++;
-		reflectedleftSphereRitem->Mat = mMaterials["bricks0"].get();
+		reflectedleftSphereRitem->Mat = mMaterials["white1x1"].get();
 
 		ReflectOffset = XMMatrixTranslation(10.0f, leftSphereRitem->World._42, leftSphereRitem->World._43);
 		ReflectWorld = ReflectRotate * ReflectOffset;
@@ -1061,7 +1057,7 @@ void ClientMain::BuildRenderItems()
 		XMStoreFloat4x4(&rightSphereRitem->World, rightSphereWorld);
 		rightSphereRitem->ObjCBIndex = objCBIndex++;
 		rightSphereRitem->Geo = mGeometries["shapeGeo"].get();
-		rightSphereRitem->Mat = mMaterials["bricks0"].get();
+		rightSphereRitem->Mat = mMaterials["white1x1"].get();
 		rightSphereRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		rightSphereRitem->IndexCount = rightSphereRitem->Geo->DrawArgs["sphere"].IndexCount;
 		rightSphereRitem->StartIndexLocation = rightSphereRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
@@ -1071,7 +1067,7 @@ void ClientMain::BuildRenderItems()
 		auto reflectedrightSphereRitem = std::make_unique<RenderItem>();
 		*reflectedrightSphereRitem = *rightSphereRitem;
 		reflectedrightSphereRitem->ObjCBIndex = objCBIndex++;
-		reflectedrightSphereRitem->Mat = mMaterials["bricks0"].get();
+		reflectedrightSphereRitem->Mat = mMaterials["white1x1"].get();
 
 		ReflectOffset = XMMatrixTranslation(20.0f, rightSphereRitem->World._42,  rightSphereRitem->World._43 );
 		ReflectWorld = ReflectRotate * ReflectOffset;
@@ -1191,23 +1187,21 @@ void ClientMain::BuildMaterials()
 {
 	std::vector<std::string> texNames =
 	{
-		"bricks0",
-		"stone0",
-		"checkboard",
-		"wirefence",
-        "bricks3", 
+		"bricks",
+		"brick2",
+		"tile",
+		"stone",
+        "WireFence", 
         "ice",
-        "mirror0",
+        "white1x1",
         "sky", 
-        "skullMat", 
 	};
-
-    int aIndex = 0;
 
     auto SetMaterial = [&](
         std::string pName, 
         int pMatCBIndex, 
         int pDiffuseSrvHeapIndex,
+        int pNormalSrvHeapIndex, 
         DirectX::XMFLOAT4 pDiffuseAlbedo,
         DirectX::XMFLOAT3 pFresnelR0, 
         float pRoughness )
@@ -1216,6 +1210,7 @@ void ClientMain::BuildMaterials()
         aTemp->Name = pName;
         aTemp->MatCBIndex = pMatCBIndex;
         aTemp->DiffuseSrvHeapIndex = pDiffuseSrvHeapIndex;
+        aTemp->NormalSrvHeapIndex = pNormalSrvHeapIndex; 
         aTemp->DiffuseAlbedo = pDiffuseAlbedo;
         aTemp->FresnelR0 = pFresnelR0;
         aTemp->Roughness = pRoughness;
@@ -1223,15 +1218,15 @@ void ClientMain::BuildMaterials()
 		mMaterials[texNames[pMatCBIndex]] = std::move(aTemp);
     };
 
-    SetMaterial("bricks0", 0, 0,XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),XMFLOAT3(0.02f, 0.02f, 0.02f),0.1f);
-	SetMaterial("stone0", 1, 1, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	SetMaterial("checkboard",2,2, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.2f);
-	SetMaterial("wirefence",3,3, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 0.25f);
-	SetMaterial("bricks3",4,4, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.02f, 0.02f, 0.02f), 0.1f);
-    SetMaterial("ice",5,5,XMFLOAT4(1.0f, 1.0f, 1.0f, 0.3f),XMFLOAT3(0.08f, 0.08f, 0.08f),0.4f);
+    SetMaterial("bricks",       0,  0,  8,   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),   XMFLOAT3(0.1f, 0.12f, 0.12f),    0.1f);
+	SetMaterial("brick2",       1,  1,  9,   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),   XMFLOAT3(0.05f, 0.05f, 0.05f),    0.3f);
+	SetMaterial("tile",         2,  2,  10,  XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),   XMFLOAT3(0.02f, 0.02f, 0.02f),    0.2f);
+	SetMaterial("stone",        3,  3,  11,   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),   XMFLOAT3(0.1f, 0.1f, 0.1f),       0.25f);
+	SetMaterial("WireFence",    4,  5,  11,   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),   XMFLOAT3(0.02f, 0.02f, 0.02f),    0.1f);
+    SetMaterial("ice",          5,  6,  11,  XMFLOAT4(1.0f, 1.0f, 1.0f, 0.3f),   XMFLOAT3(0.78f, 0.78f, 0.78f),    0.4f);
 
 
-	SetMaterial("mirror0", 6, 6, XMFLOAT4(0.0f, 0.0f, 0.0f, 0.5f), XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f);
-	SetMaterial("sky", 7, 7, XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.1f, 0.1f, 0.1f), 1.0f);
+	SetMaterial("white1x1",     6,  7,  11,  XMFLOAT4(0.0f, 0.0f, 0.0f, 0.5f),   XMFLOAT3(0.98f, 0.97f, 0.95f), 0.1f);
+	SetMaterial("sky",          7,  11, 11,   XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f),   XMFLOAT3(0.1f, 0.1f, 0.1f),    1.0f);
 }
 
