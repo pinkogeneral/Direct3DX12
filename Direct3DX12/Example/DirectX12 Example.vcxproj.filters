@@ -13,10 +13,10 @@
     <FxCompile Include="Shaders\sky.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
-    <FxCompile Include="Shadows.hlsl">
+    <FxCompile Include="Shaders\ShadowDebug.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
-    <FxCompile Include="ShadowDebug.hlsl">
+    <FxCompile Include="Shaders\Shadows.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
   </ItemGroup>

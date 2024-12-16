@@ -1,4 +1,4 @@
-#include "Common.hlsl"
+#include "common.hlsl"
 
 struct VertexIn
 {
@@ -20,11 +20,11 @@ VertexOut VS(VertexIn vin)
 	
     // Transform to world space.
     float4 posW = mul(float4(vin.PosL, 1.0f), gWorld);
-
+	//
     // Transform to homogeneous clip space.
     vout.PosH = mul(posW, gViewProj);
-	
-	// Output vertex attributes for interpolation across triangle.
+	//
+	//// Output vertex attributes for interpolation across triangle.
 	float4 texC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform);
 	vout.TexC = mul(texC, matData.MatTransform).xy;
 	
@@ -40,9 +40,9 @@ void PS(VertexOut pin)
 	MaterialData matData = gMaterialData[gMaterialIndex];
 	float4 diffuseAlbedo = matData.DiffuseAlbedo;
     uint diffuseMapIndex = matData.DiffuseMapIndex;
-	
-	// Dynamically look up the texture in the array.
-	diffuseAlbedo *= gTextureMaps[diffuseMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
+	//
+	//// Dynamically look up the texture in the array.
+	diffuseAlbedo *= gDiffuseMap[diffuseMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
 
 #ifdef ALPHA_TEST
     // Discard pixel if texture alpha < 0.1.  We do this test as soon 

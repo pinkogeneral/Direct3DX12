@@ -54,6 +54,7 @@ enum class RenderLayer : int
 	Mirrors,
 	Reflected,
 	Sky,
+	Debug, 
 	Count
 };
 
@@ -68,6 +69,7 @@ public:
 	virtual bool Initialize() override;
 
 private:
+	virtual void CreateRtvAndDsvDescriptorHeaps()override;
 	virtual void OnResize()override;
 	virtual void Update(const GameTimer& gt) override;
 	virtual void Draw(const GameTimer& gt) override;
@@ -81,6 +83,7 @@ private:
 	void AnimateMaterials(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
+	void UpdateShadowTransform(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
 	void UpdateReflectedPassCB(const GameTimer& gt);
 
@@ -101,7 +104,7 @@ private:
 
 	// 정적 표본추출기 : 셰이더에서 쓰인다. 셰이더에서 표본추출기를 사용하려면 표본추출기 객체에 대한 서술자를
 	// 원하는 셰이더에 묶어야 한다. 
-	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> GetStaticSamplers();
 
 private:
 	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
@@ -148,4 +151,23 @@ private:
 	Camera mCamera;
 
 	POINT mLastMousePos;
+
+
+	DirectX::BoundingSphere mSceneBounds;
+
+	float mLightNearZ = 0.0f;
+	float mLightFarZ = 0.0f;
+	XMFLOAT3 mLightPosW;
+	XMFLOAT4X4 mLightView = MathHelper::Identity4x4();
+	XMFLOAT4X4 mLightProj = MathHelper::Identity4x4();
+	XMFLOAT4X4 mShadowTransform = MathHelper::Identity4x4();
+
+	float mLightRotationAngle = 0.0f;
+	XMFLOAT3 mBaseLightDirections[3] = {
+		XMFLOAT3(0.57735f, -0.57735f, 0.57735f),
+		XMFLOAT3(-0.57735f, -0.57735f, 0.57735f),
+		XMFLOAT3(0.0f, -0.707f, -0.707f)
+	};
+	XMFLOAT3 mRotatedLightDirections[3];
+
 };
