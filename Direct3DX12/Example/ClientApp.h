@@ -86,6 +86,8 @@ private:
 	void UpdateShadowTransform(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
 	void UpdateReflectedPassCB(const GameTimer& gt);
+	void UpdateShadowPassCB(const GameTimer& gt);
+
 
 	void LoadTexture(); 
 	void BuildDescriptorHeaps();
@@ -144,6 +146,8 @@ private:
 
 	PassConstants mMainPassCB;
 	PassConstants mReflectedPassCB;
+	PassConstants mShadowPassCB;// index 1 of pass cbuffer.
+
 
 	UINT mPassCbvOffset = 0;
 	RenderItem* mReflectedSkullRitem = nullptr;

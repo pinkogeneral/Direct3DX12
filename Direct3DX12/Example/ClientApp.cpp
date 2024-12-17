@@ -148,6 +148,7 @@ void ClientMain::Update(const GameTimer& gt)
 	UpdateShadowTransform(gt);
     UpdateMainPassCB(gt);
     UpdateReflectedPassCB(gt);
+	UpdateShadowPassCB(gt);
 }
 
 void ClientMain::Draw(const GameTimer& gt)
@@ -209,7 +210,7 @@ void ClientMain::Draw(const GameTimer& gt)
     UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
 
     // 불투명한 항목 (바닥, 벽, 상자등을 그린다.)
-
+	mCommandList->SetPipelineState(mPSOs["opaque"].Get());
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Opaque]);
 
 	mCommandList->SetPipelineState(mPSOs["sky"].Get());
@@ -225,7 +226,7 @@ void ClientMain::Draw(const GameTimer& gt)
 
     // 반사상을 거울 영역에만 그린다. (스텐실 버퍼 항목이 1인 픽셀들만 그려지게 한다) 이전과 다른 패스별 살수 버퍼를 지정해야 함을 주목하자.
     // 거울 평면에 대해 반사된 광원 설정을 담은 패스별 상수 버퍼를 지정한다.
-    mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress() + 1 * passCBByteSize);
+    //mCommandList->SetGraphicsRootConstantBufferView(0, passCB->GetGPUVirtualAddress() + 1 * passCBByteSize);
     mCommandList->SetPipelineState(mPSOs["drawStencilReflections"].Get());
     DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Reflected]);
 
@@ -451,11 +452,11 @@ void ClientMain::UpdateMainPassCB(const GameTimer& gt)
     mMainPassCB.DeltaTime = gt.DeltaTime();
 	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 	mMainPassCB.mLight[0].Direction = mRotatedLightDirections[0];
-	mMainPassCB.mLight[0].Strength = { 0.6f, 0.6f, 0.6f };
+	mMainPassCB.mLight[0].Strength = { 0.9f, 0.8f, 0.7f };
 	mMainPassCB.mLight[1].Direction = mRotatedLightDirections[1];
-	mMainPassCB.mLight[1].Strength = { 0.3f, 0.3f, 0.3f };
+	mMainPassCB.mLight[1].Strength = { 0.45f, 0.45f, 0.45f };
 	mMainPassCB.mLight[2].Direction = mRotatedLightDirections[2];
-	mMainPassCB.mLight[2].Strength = { 0.15f, 0.15f, 0.15f };
+	mMainPassCB.mLight[2].Strength = { 0.35f, 0.35f, 0.15f };
 
 
     auto currPassCB = mCurrFrameResource->PassCB.get();
@@ -480,6 +481,35 @@ void ClientMain::UpdateReflectedPassCB(const GameTimer& gt)
 	// Reflected pass stored in index 1
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(1, mReflectedPassCB);
+}
+
+void ClientMain::UpdateShadowPassCB(const GameTimer& gt)
+{
+	XMMATRIX view = XMLoadFloat4x4(&mLightView);
+	XMMATRIX proj = XMLoadFloat4x4(&mLightProj);
+
+	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
+	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
+	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
+	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
+
+	UINT w = mShadowMap->Width();
+	UINT h = mShadowMap->Height();
+
+	XMStoreFloat4x4(&mShadowPassCB.View, XMMatrixTranspose(view));
+	XMStoreFloat4x4(&mShadowPassCB.InvView, XMMatrixTranspose(invView));
+	XMStoreFloat4x4(&mShadowPassCB.Proj, XMMatrixTranspose(proj));
+	XMStoreFloat4x4(&mShadowPassCB.InvProj, XMMatrixTranspose(invProj));
+	XMStoreFloat4x4(&mShadowPassCB.ViewProj, XMMatrixTranspose(viewProj));
+	XMStoreFloat4x4(&mShadowPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+	mShadowPassCB.EyePosW = mLightPosW;
+	mShadowPassCB.RenderTargetSize = XMFLOAT2((float)w, (float)h);
+	mShadowPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / w, 1.0f / h);
+	mShadowPassCB.NearZ = mLightNearZ;
+	mShadowPassCB.FarZ = mLightFarZ;
+
+	auto currPassCB = mCurrFrameResource->PassCB.get();
+	currPassCB->CopyData(1, mShadowPassCB);
 }
 
 void ClientMain::LoadTexture()
@@ -1378,6 +1408,9 @@ void ClientMain::DrawSceneToShadowMap()
 	mCommandList->SetPipelineState(mPSOs["shadow_opaque"].Get());
 
 	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Opaque]);
+	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::Reflected]);
+	DrawRenderItems(mCommandList.Get(), mRenderItems[(int)RenderLayer::AlphaTested]);
+
 
 	// Change back to GENERIC_READ so we can read the texture in a shader.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mShadowMap->Resource(),
