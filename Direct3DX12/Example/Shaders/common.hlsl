@@ -30,8 +30,9 @@ struct MaterialData
 
 TextureCube gCubeMap : register(t0);
 Texture2D gShadowMap : register(t1);
+Texture2D gSsaoMap   : register(t2);
 
-Texture2D gDiffuseMap[20] : register(t2);
+Texture2D gDiffuseMap[20] : register(t3);
 
 StructuredBuffer<MaterialData> gMaterialData : register(t0, space1);
 

@@ -19,6 +19,15 @@
     <FxCompile Include="Shaders\Shadows.hlsl">
       <Filter>shaders</Filter>
     </FxCompile>
+    <FxCompile Include="Shaders\DrawNormals.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\Ssao.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\SsaoBlur.hlsl">
+      <Filter>shaders</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Common\Camera.cpp">
@@ -49,6 +58,9 @@
       <Filter>Scene</Filter>
     </ClCompile>
     <ClCompile Include="ShadowMap.cpp">
+      <Filter>Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="Ssao.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
   </ItemGroup>
@@ -87,6 +99,9 @@
       <Filter>Scene</Filter>
     </ClInclude>
     <ClInclude Include="ShadowMap.h">
+      <Filter>Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Ssao.h">
       <Filter>Scene</Filter>
     </ClInclude>
   </ItemGroup>

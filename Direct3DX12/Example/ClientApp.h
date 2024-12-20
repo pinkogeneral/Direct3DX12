@@ -5,6 +5,7 @@
 #include "../Common/Camera.h"
 #include "FrameResource.h"
 #include "ShadowMap.h"
+#include "Ssao.h"
 
 
 using Microsoft::WRL::ComPtr;
@@ -87,12 +88,16 @@ private:
 	void UpdateMainPassCB(const GameTimer& gt);
 	void UpdateReflectedPassCB(const GameTimer& gt);
 	void UpdateShadowPassCB(const GameTimer& gt);
+	void UpdateSsaoCB(const GameTimer& gt);
 
 
 	void LoadTexture(); 
 	void BuildDescriptorHeaps();
 	void BuildConstantBufferViews();
+
 	void BuildRootSignature();
+	void BuildSsaoRootSignature();
+
 	void BuildShadersAndInputLayout();
 	void BuildShapeGeometry();
 	void BuildPSOs();
@@ -101,8 +106,14 @@ private:
 	void BuildSkyRenderItems();
 	void BuildMaterials();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
-	void DrawSceneToShadowMap();
 
+	void DrawSceneToShadowMap();
+	void DrawNormalsAndDepth();
+
+	CD3DX12_CPU_DESCRIPTOR_HANDLE GetCpuSrv(int index)const;
+	CD3DX12_GPU_DESCRIPTOR_HANDLE GetGpuSrv(int index)const;
+	CD3DX12_CPU_DESCRIPTOR_HANDLE GetDsv(int index)const;
+	CD3DX12_CPU_DESCRIPTOR_HANDLE GetRtv(int index)const;
 
 	// 정적 표본추출기 : 셰이더에서 쓰인다. 셰이더에서 표본추출기를 사용하려면 표본추출기 객체에 대한 서술자를
 	// 원하는 셰이더에 묶어야 한다. 
@@ -114,8 +125,9 @@ private:
 	int mCurrFrameResourceIndex = 0;
 
 	ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
-	ComPtr<ID3D12DescriptorHeap> mCbvHeap = nullptr;
+	ComPtr<ID3D12RootSignature> mSsaoRootSignature = nullptr;
 
+	ComPtr<ID3D12DescriptorHeap> mCbvHeap = nullptr;
 	UINT mCbvSrvDescriptorSize = 0;
 	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
 
@@ -127,7 +139,8 @@ private:
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 
-	std::unique_ptr<ShadowMap> mShadowMap;
+	std::unique_ptr<ShadowMap> mShadowMap; // 그림자
+	std::unique_ptr<Ssao> mSsao; // 차폐
 
 	// 렌더 아이템 목록.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
@@ -137,11 +150,15 @@ private:
 
 	XMFLOAT3 mReflectTranslation = { 0.0f, 1.0f, -5.0f };
 
-	UINT mSkyTexHeapIndex = 0; //D3D12_DESCRIPTOR_HEAP_DESC 여기서 만들거 인덱스 ..
+	UINT mSkyTexHeapIndex = 0;		//D3D12_DESCRIPTOR_HEAP_DESC 여기서 만들거 인덱스 ..
 	UINT mShadowMapHeapIndex = 0;
+	UINT mSsaoHeapIndexStart = 0;
+	UINT mSsaoAmbientMapIndex = 0;
+
 	UINT mNullCubeSrvIndex = 0; 
-	UINT mNullTexSrvIndex = 0;
-	
+	UINT mNullTexSrvIndex1 = 0;
+	UINT mNullTexSrvIndex2 = 0;
+
 	CD3DX12_GPU_DESCRIPTOR_HANDLE mNullSrv;
 
 	PassConstants mMainPassCB;
